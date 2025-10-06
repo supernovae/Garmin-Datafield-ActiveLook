@@ -6,13 +6,13 @@
         <settingConfig type="alphaNumeric" readonly="true"/>
     </setting>
     <setting propertyKey="@Properties.run" title="@Strings.settings_run">
-        <settingConfig type="alphaNumeric" />
+        <settingConfig type="alphaNumeric" maxLength="76" />
     </setting>
     <setting propertyKey="@Properties.bike" title="@Strings.settings_bike">
-        <settingConfig type="alphaNumeric" />
+        <settingConfig type="alphaNumeric"  maxLength="76"/>
     </setting>
     <setting propertyKey="@Properties.screens" title="@Strings.settings_screens">
-        <settingConfig type="alphaNumeric" />
+        <settingConfig type="alphaNumeric"  maxLength="76"/>
     </setting>
     <setting propertyKey="@Properties.is_gesture_enable" title="@Strings.settings_is_gesture_enable">
         <settingConfig type="boolean" />

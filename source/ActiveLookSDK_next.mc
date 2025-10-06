@@ -3,6 +3,8 @@ using Toybox.StringUtil;
 using Toybox.System;
 
 using ActiveLookBLE;
+using ActiveLook.PageSettings;
+using ActiveLook.Layouts;
 
 (:typecheck(false))
 module ActiveLookSDK {
@@ -17,8 +19,10 @@ module ActiveLookSDK {
     typedef ActiveLookListener as interface {
         function onFirmwareEvent(major as Toybox.Lang.Number, minor as Toybox.Lang.Number, patch as Toybox.Lang.Number) as Void;
         function onCfgVersionEvent(cfgVersion as Toybox.Lang.Number) as Void;
+        function onFreeSpaceEvent(freeSpace as Toybox.Lang.Number) as Void;
         function onGestureEvent() as Void;
         function onBatteryEvent(batteryLevel as Toybox.Lang.Number) as Void;
+        function onNotEnoughBatteryEvent(batteryLevel as Toybox.Lang.Number) as Void;
         function onDeviceReady() as Void;
         function onDeviceDisconnected() as Void;
         function onBleError(exception as Toybox.Lang.Exception) as Void;
@@ -36,6 +40,10 @@ module ActiveLookSDK {
     function isConnected()                           as Toybox.Lang.Boolean {
         return device != null;
     }
+
+    var userPages                                    as Toybox.Lang.Array                        = [];
+    var glassesPageList                              as Toybox.Lang.Array                        = [];
+    var glassesPageBuffer                            as Toybox.Lang.Array                        = [];
 
     var isActivatingGestureNotif                     as Toybox.Lang.Boolean                      = false;
     var isGestureNotifActivated                      as Toybox.Lang.Boolean                      = false;
@@ -58,21 +66,37 @@ module ActiveLookSDK {
         return firmwareVersion != null;
     }
 
-    var isUpdatingBleParams                          as Toybox.Lang.Boolean                      = false;
-    var isBleParamsUpdated                           as Toybox.Lang.Boolean                      = false;
-
     var isReadingCfgVersion                          as Toybox.Lang.Boolean                      = false;
     var cfgVersion                                   as Toybox.Lang.Number or Null               = null;
     function isCfgVersionRead()                      as Toybox.Lang.Boolean {
         return cfgVersion != null;
     }
+    
+    var isReadingPageList                            as Toybox.Lang.Boolean                      = false;
+    var isPageListRead                               as Toybox.Lang.Boolean                      = false;
+    
+    var isReadingPages                               as Toybox.Lang.Boolean                      = false;
+    var isPagesRead                                  as Toybox.Lang.Boolean                      = false;
 
+    // freeSpaceLimit is the minimum free space required to save a page, if freeSpace < freeSpaceLimit, less used configurations will be deleted
+    var freeSpaceLimit                               as Toybox.Lang.Number                       = 400;
+    var isReadingFreeSpace                           as Toybox.Lang.Boolean                      = false;
+    var freeSpace                                    as Toybox.Lang.Number or Null               = null;
+    var isFreeSpaceRead                              as Toybox.Lang.Boolean                      = false;
+
+    var isDeletingLessUsedCfg                        as Toybox.Lang.Boolean                      = false;
+    var isLessUsedCfgDeleted                         as Toybox.Lang.Boolean                      = false;
+
+    var isSavingPage                               as Toybox.Lang.Boolean                        = false;
+    var isPageSaved                                as Toybox.Lang.Boolean                        = false;
+    
     var isUpdatingALSSensor                          as Toybox.Lang.Boolean                      = false;
     var isALSSensorUpdated                           as Toybox.Lang.Boolean                      = false;
 
     var isUpdatingGestureSensor                      as Toybox.Lang.Boolean                      = false;
     var isGestureSensorUpdated                       as Toybox.Lang.Boolean                      = false;
 
+    var offsetIdPage                                 as Toybox.Lang.Number                       = 100;
 
     function isIdled()                               as Toybox.Lang.Boolean {
         if (isScanning)               { return false; }
@@ -82,11 +106,13 @@ module ActiveLookSDK {
         if (isActivatingALookTxNotif) { return false; }
         if (isReadingBattery)         { return false; }
         if (isReadingFirmwareVersion) { return false; }
-        if (isUpdatingBleParams)      { return false; }
         if (isUpdatingALSSensor)      { return false; }
         if (isUpdatingGestureSensor)  { return false; }
         if (isReadingCfgVersion)      { return false; }
-        if (isRegisteringProfile)     { return true; }
+        if (isReadingFreeSpace)       { return false; }
+        if (isDeletingLessUsedCfg)    { return false; }
+        if (isSavingPage)             { return false; }
+        if (isRegisteringProfile)     { return true;  }
         return true;
     }
 
@@ -95,9 +121,9 @@ module ActiveLookSDK {
         if (!isConnected())           { return false; }
         if (!isBatteryRead())         { return false; }
         if (!isFirmwareVersionRead()) { return false; }
-        if (!isBleParamsUpdated)      { return false; }
         if (!isALSSensorUpdated)      { return false; }
         if (!isCfgVersionRead())      { return false; }
+        if (!isFreeSpaceRead)         { return false; }
         if (!isGestureSensorUpdated)  { return false; }
         if (!isGestureNotifActivated) { return false; }
         if (!isBatteryNotifActivated) { return false; }
@@ -108,14 +134,14 @@ module ActiveLookSDK {
     var time = null;    var clearError = null;
     var timeHError = null; var timeMError = null;
     var battery = null; var batteryError = null;
-    var cmdStacking = null;
+    var cmdStacking = null; var cmdMaxSize  = 0;
     var ble = null;     var listener = null;
 
     var _cbCharacteristicWrite   = null;
 
     var layouts = [];
-    var buffers = [];   var values = [];
     var rotate = 0;
+    var isWritingCharacteristic = false as Toybox.Lang.Boolean;
 
     class ALSDK {
 
@@ -127,6 +153,7 @@ module ActiveLookSDK {
         function initialize(obj) {
             listener = obj != null ? obj : self;
             ble = ActiveLookBLE.ActiveLook.setUp(self);
+            userPages =  self.getUsersPages();
         }
 
         function startGlassesScan() {
@@ -168,12 +195,50 @@ module ActiveLookSDK {
             if (clearError != true) {
                 if (batteryError != null) { self.setBattery(batteryError); }
                 if (timeMError != null) { self.setTime(timeHError, timeMError); }
-                for (var i = 0; i < buffers.size(); i ++) {
-                    if (buffers[i] != null) {
-                        self.__updateLayoutValueBuffer(i);
+            }
+        }
+
+        function getUsersPages(){
+            var pagesSpec = [];
+            try {
+                var _ai = "screens";
+                if (Toybox.Activity has :getProfileInfo) {
+                    var profileInfo = Toybox.Activity.getProfileInfo();
+                    if (profileInfo has :sport) {
+                        switch (profileInfo.sport) {
+                            case Toybox.Activity.SPORT_RUNNING: { _ai = "run";     break; }
+                            case Toybox.Activity.SPORT_CYCLING: { _ai = "bike";    break; }
+                            default:                            { _ai = "screens"; break; }
+                        }
+                    }
+                }
+                pagesSpec = PageSettings.strToPages(Application.Properties.getValue(_ai), "(1,12,2)(15,4,2)(10,18,22)(0)");
+                _log("getUsersPages",[pagesSpec]);
+                return pagesSpec;
+            } catch (e) {
+                pagesSpec = PageSettings.strToPages("(1,12,2)(15,4,2)(10,18,22)(0)", null);
+                _log("getUsersPages",[e, pagesSpec]);
+                return pagesSpec;
+            }
+        }
+
+        function pageToBuffer(pageSpec as PageSettings.PageSpec){
+            var buffer = []b;
+            var currentLayouts = Layouts.pageToGenerator(pageSpec);
+            for(var i = 0; i < currentLayouts.size(); i++) {
+                var layoutToBuffer = layoutToBufferSavePage(currentLayouts[i][:id]);
+                if(layoutToBuffer.size() > 0){ 
+                    if(layoutToBuffer[0] != 0x00){ 
+                        buffer.addAll(layoutToBuffer);
                     }
                 }
             }
+            _log("pageToBuffer",[buffer]);
+            return buffer;
+        }
+       
+        function layoutToBufferSavePage(layout) {
+            return [((layout >> 24) & 0xFF),((layout >> 16) & 0xFF),((layout >> 8) & 0xFF),(layout & 0xFF)]b;
         }
         
         function profileRegistrationStart() {
@@ -212,6 +277,29 @@ module ActiveLookSDK {
 			}
 		}
 
+        function byteArrayToInt(byteArray as Toybox.Lang.ByteArray, littleEndian as Toybox.Lang.Boolean) as Toybox.Lang.Integer {
+            if (byteArray == null || byteArray.size() == 0) {
+                return 0;
+            }
+
+            var result = 0;
+            var byteCount = byteArray.size();
+
+            if (littleEndian) {
+                // Little-endian (LSB first)
+                for (var i = 0; i < byteCount; i++) {
+                    result |= byteArray[i] << (8 * i);
+                }
+            } else {
+                // Big-endian (MSB first)
+                for (var i = 0; i < byteCount; i++) {
+                    result |= byteArray[i] << (8 * (byteCount - 1 - i));
+                }
+            }
+
+            return result;
+        }
+
         function stringToPadByteArray(str, size, leftPadding) {
 			var result = StringUtil.convertEncodedString(str, {
 				:fromRepresentation => StringUtil.REPRESENTATION_STRING_PLAIN_TEXT,
@@ -240,6 +328,8 @@ module ActiveLookSDK {
 
 		function commandBuffer(id, data) {
 			var buffer = new[0]b;
+            var size = 5 + data.size();
+            cmdMaxSize = cmdMaxSize < size ? size : cmdMaxSize;
 			buffer.addAll([0xFF, id, 0x00, 0x05 + data.size()]b);
 			buffer.addAll(data);
 			buffer.add(0xAA);
@@ -257,7 +347,7 @@ module ActiveLookSDK {
                     var data = [0x07]b;
                     var paddingChar = arg < 10 ? "$" :  "";
                     data.addAll(self.stringToPadByteArray(paddingChar + arg.toString(), 3, true));
-                    System.println(Lang.format("setBattery $1$", [data]));
+                    _log("setBattery",[data]);
                     self.sendRawCmd(self.commandBuffer(0x62, data));
                     battery = arg;
                 } catch (e) {
@@ -278,6 +368,45 @@ module ActiveLookSDK {
             }
         }
 
+        function pageList() {
+            try {
+                self.sendRawCmd(self.commandBuffer(0x85, []b));
+            } catch (e) {
+                isReadingPageList = false;
+                onBleError(e);
+            }
+        }
+
+        function pageGet(id) {
+            try {
+                var data = numberToByteArray(id);
+                self.sendRawCmd(self.commandBuffer(0x81, data));
+            } catch (e) {
+                isReadingPages = false;
+                onBleError(e);
+            }
+        }
+
+        function freeSpaceRead() {
+            try {
+                _log("freeSpaceRead",[]);
+                self.sendRawCmd(self.commandBuffer(0xD7, []b));
+            } catch (e) {
+                isReadingFreeSpace = false;
+                onBleError(e);
+            }
+        }
+        
+        function cfgDeleteLessUsed() {
+            try {
+                _log("cfgDeleteLessUsed",[]);
+                self.sendRawCmd(self.commandBuffer(0xD6, []b));
+            } catch (e) {
+                isDeletingLessUsedCfg = false;
+                onBleError(e);
+            }
+        }
+
         function setTime(hour, minute) {
             timeHError = null;
             timeMError = null;
@@ -287,7 +416,7 @@ module ActiveLookSDK {
                     var value = hour.format("%02d") + ":" + minute.format("%02d");
                     var data = [0x0A]b;
                     data.addAll(self.stringToPadByteArray(value, null, null));
-                    System.println(Lang.format("setTime $1$", [data]));
+                    _log("setTime", [data]);
                     self.sendRawCmd(self.commandBuffer(0x62, data));
                 } catch (e) {
                     time = null;
@@ -301,7 +430,7 @@ module ActiveLookSDK {
         function clearScreen() {
             clearError = null;
             try {
-                System.println(Lang.format("clearScreen $1$", [1]));
+                _log("clearScreen", [1]);
                 self.sendRawCmd(self.commandBuffer(0x01, []b));
                 time = null;
                 if (batteryError == null) {
@@ -325,24 +454,6 @@ module ActiveLookSDK {
             self.sendRawCmd(self.commandBuffer(0x37, data));
 		}
 
-        function holdGraphicEngine(){
-            _log("holdGraphicEngine", []);
-            self.holdAndFlush(0);
-        }
-        
-        function flushGraphicEngine(){
-            _log("flushGraphicEngine", []);
-            self.holdAndFlush(1);
-        }
-
-        function resetGraphicEngine(){
-            _log("resetGraphicEngine", []);
-            self.holdAndFlush(0xFF);
-        }
-
-        function holdAndFlush(value) {
-            self.sendRawCmd(self.commandBuffer(0x39, [value]b));
-		}
 
         function __onWrite_finishPayload(c, s) {
             _cbCharacteristicWrite = null;
@@ -355,12 +466,17 @@ module ActiveLookSDK {
 
         function sendRawCmd(buffer) {
             var bufferToSend = []b;
+            flushCmdStackingIfSup(200);
             if (cmdStacking != null) {
                 bufferToSend.addAll(cmdStacking);
                 cmdStacking = null;
             }
             bufferToSend.addAll(buffer);
-            _log("sendRawCmdBufferSize", [bufferToSend.size()]);
+            _log("sendRawCmdBufferSize", [bufferToSend.size(), isWritingCharacteristic]);
+            if(isWritingCharacteristic){
+                cmdStacking = bufferToSend;
+                return;
+            }
             try {
                 if (bufferToSend.size() > 20) {
                     var sendNow = bufferToSend.slice(0, 20);
@@ -369,10 +485,12 @@ module ActiveLookSDK {
                     ble.getBleCharacteristicActiveLookRx()
                         .requestWrite(sendNow, {:writeType => BluetoothLowEnergy.WRITE_TYPE_WITH_RESPONSE});
                     _log("cmdSended",[arrayToHex(sendNow)]);
+                    isWritingCharacteristic = true;
                 } else if (bufferToSend.size() > 0) {
                     ble.getBleCharacteristicActiveLookRx()
                         .requestWrite(bufferToSend, {:writeType => BluetoothLowEnergy.WRITE_TYPE_WITH_RESPONSE});
                     _log("cmdSended",[arrayToHex(bufferToSend)]);
+                    isWritingCharacteristic = true;
                 }
             } catch (e) {
                 cmdStacking = bufferToSend;
@@ -380,89 +498,34 @@ module ActiveLookSDK {
             }
 		}
 
-        function indexIncompleteCmd(){
-            if(cmdStacking){
-                _log("indexIncompleteCmd",[arrayToHex(cmdStacking)]);
-                for(var i = 0; i < cmdStacking.size(); i++) {
-                    if(cmdStacking[i] == 0xAA){
-                        if(cmdStacking.size() > i + 1){
-                            if(cmdStacking[i+1] == 0xFF){
-                                return i+1;
-                            }
-                        }
-                    }
-                }
-            }
-            return 0;
-        }
-
         function flushCmdStacking(){
-            _log("flushCmdStacking",[cmdStacking == null ? 0 : cmdStacking.size()]);
-            var indexIncompleteCmd = indexIncompleteCmd() as Toybox.Lang.Number;
-            cmdStacking = indexIncompleteCmd != 0 ? cmdStacking.slice(null, indexIncompleteCmd) : null ;
-            self.resetGraphicEngine();
-            _log("flushCmdStacking",[cmdStacking == null ? 0 : arrayToHex(cmdStacking)]);
+            _log("flushCmdStacking",["Size : "+ cmdStacking.size()]);
+            var dummyBits = self.dummyBits(cmdMaxSize) as Toybox.Lang.ByteArray;
+            cmdStacking = dummyBits.size() != 0 ? dummyBits : null ;
+            cmdMaxSize = 0;
         }
 
         function flushCmdStackingIfSup(value as Toybox.Lang.Number){
             if(cmdStacking != null){
-                if(cmdStacking.size() > 200){
+                if(cmdStacking.size() > value){
                     _log("flushCmdStackingIfSup",[value,cmdStacking == null ? 0 : cmdStacking.size()]);
                     flushCmdStacking();
                 }
             }
         }
 
-        function resetLayouts(args) {
-            var newBuffers = [];
-            var newValues = [];
-            for (var i = 0; i < args.size(); i ++) {
-                var pos = layouts.indexOf(args[i]);
-                if (pos < 0) {
-                    newBuffers.add(null);
-                    newValues.add("");
-                } else {
-                    newBuffers.add(buffers[pos]);
-                    newValues.add(values[pos]);
-                }
+        function dummyBits(value){
+            var data = []b;
+            for (var i = 0; i < value; i++) {
+                data.add(0x00);
             }
+            return data;
+        }
+
+        function resetLayouts(args) {
             layouts = args;
-            buffers = newBuffers;
-            values = newValues;
             time = null;
             battery = null;
-        }
-
-        function updateLayoutValue(layout, value) {
-            if (isReady()) {
-                var pos = layouts.indexOf(layout);
-                if (pos < 0) {
-                    pos = layouts.size();
-                    layouts.add(layout);
-                    buffers.add(null);
-                    values.add("");
-                }
-                if (pos >= 0 && !values[pos].equals(value) && value != null) {
-                    values[pos] = value;
-                    buffers[pos] = [((layout >> 24) & 0xFF),((layout >> 16) & 0xFF),((layout >> 8) & 0xFF),(layout & 0xFF)]b;
-                    buffers[pos].addAll(value);
-                    self.__updateLayoutValueBuffer(pos);
-                }
-            }
-        }
-
-        function __updateLayoutValueBuffer(pos) {
-            var data = buffers[pos];
-            buffers[pos] = null;
-            try {
-                System.println(Lang.format("__updateLayoutValueBuffer $1$", [data]));
-                self.sendRawCmd(self.commandBuffer(layoutCmdId, data));
-                rotate = (rotate + 1) % buffers.size();
-            } catch (e) {
-                buffers[pos] = data;
-                _cbCharacteristicWrite = self.method(:__onWrite_finishpUdateLayoutValueBuffer);
-                onBleError(e);
-            }
         }
 
         function __onWrite_finishpUdateLayoutValueBuffer(c, s) {
@@ -534,22 +597,6 @@ module ActiveLookSDK {
                 }
                 return false;
             }
-            if (!isBleParamsUpdated) { _log("setUpDevice", [ActiveLookSDK.device, "Not isBleParamsUpdated"]);
-                if (!isUpdatingBleParams) { _log("setUpDevice", [ActiveLookSDK.device, "Not isUpdatingBleParams"]);
-                    try {
-                        // Command id : 0xA4
-                        // u16 intervalMin: 30ms => 24 (interval are in 1.25 ms)
-                        // u16 intervalMax: 30ms  => 24 (interval are in 1.25 ms)
-                        // u16 slaveLatency: 0
-                        // u16 supTimeout: 4s => 400 (supervision is 10 ms)
-                        var data = [0x00, 0x18, 0x00, 0x18, 0x00, 0x00, 0x01, 0x90]b;
-                        ble.getBleCharacteristicActiveLookRx()
-                            .requestWrite(self.commandBuffer(0xA4, data), {:writeType => BluetoothLowEnergy.WRITE_TYPE_WITH_RESPONSE});
-                        isUpdatingBleParams = true;
-                    } catch (e) { onBleError(e); }
-                }
-                return false;
-            }
             if (!isALSSensorUpdated) { _log("setUpDevice", [ActiveLookSDK.device, "Not isALSSensorUpdated"]);
                 if (!isUpdatingALSSensor) { _log("setUpDevice", [ActiveLookSDK.device, "Not isUpdatingALSSensor"]);
                     try {    
@@ -564,11 +611,83 @@ module ActiveLookSDK {
                 }
                 return false;
             }
+            if (!isPageListRead) { _log("setUpDevice", [ActiveLookSDK.device, "Not isPageListRead"]);
+                if (!isReadingPageList) { _log("setUpDevice", [ActiveLookSDK.device, "Not isReadingPageList"]);
+                    try {
+                        self.pageList();
+                        isReadingPageList = true;
+                    } catch (e) { onBleError(e); }
+                }
+                return false;
+            }
+            if (!isPagesRead) { _log("setUpDevice", [ActiveLookSDK.device, "Not isPagesRead"]);
+                if (!isReadingPages) { _log("setUpDevice", [ActiveLookSDK.device, "Not isReadingPages"]);
+                    try {
+                        if(glassesPageList.size() == 0){
+                            isReadingPages = false;
+                            isPagesRead = true;
+                        }else{
+                            for(var i = 0; i < glassesPageList.size(); i++){
+                                self.pageGet(glassesPageList[i]);
+                            }
+                            isReadingPages = true;
+                        }
+                    } catch (e) { onBleError(e); }
+                }
+                return false;
+            }
             if (!isCfgVersionRead()) { _log("setUpDevice", [ActiveLookSDK.device, "Not isCfgVersionRead"]);
                 if (!isReadingCfgVersion) { _log("setUpDevice", [ActiveLookSDK.device, "Not isReadingCfgVersion"]);
                     try {
                         self.cfgRead();
                         isReadingCfgVersion = true;
+                    } catch (e) { onBleError(e); }
+                }
+                return false;
+            }
+            // TODO: Refacto no need to read free space if we don't need to save a page
+            if (!isFreeSpaceRead) { _log("setUpDevice", [ActiveLookSDK.device, "Not isFreeSpaceRead"]);
+                if (!isReadingFreeSpace) { _log("setUpDevice", [ActiveLookSDK.device, "Not isReadingFreeSpace"]);
+                    try {
+                        self.freeSpaceRead();
+                        isReadingFreeSpace = true;
+                    } catch (e) { onBleError(e); }
+                }
+                return false;
+            } 
+            // TODO: Refacto no need to delete less used cfg if we don't need to save a page
+            if (!isLessUsedCfgDeleted) { _log("setUpDevice", [ActiveLookSDK.device, "Not isLessUsedCfgDeleted"]);
+                if (!isDeletingLessUsedCfg) { _log("setUpDevice", [ActiveLookSDK.device, "Not isDeletingLessUsedCfg"]);
+                    try {
+                        self.cfgDeleteLessUsed();
+                        isDeletingLessUsedCfg = true;
+                    } catch (e) { onBleError(e); }
+                }
+                return false;
+            }
+            if (!isPageSaved) { _log("setUpDevice", [ActiveLookSDK.device, "Not isPageSaved"]);
+                if (!isSavingPage) { _log("setUpDevice", [ActiveLookSDK.device, "Not isSavingPage"]);
+                    try {
+                        var didSavedAPage = false;
+                        for(var i = 0; i < userPages.size(); i++){
+                            var pageBuffer = self.pageToBuffer(userPages[i]);
+                            var buffer = numberToByteArray(i + offsetIdPage);
+                            buffer.addAll(pageBuffer);
+                            if(glassesPageBuffer.indexOf(buffer) == -1 && pageBuffer.size() > 0){
+                                if(batteryLevel < 5){
+                                    listener.onNotEnoughBatteryEvent(batteryLevel);
+                                }else{
+                                    if(!didSavedAPage){self.cfgWrite();}
+                                    self.pageSave(buffer);
+                                    isSavingPage = true;
+                                }
+                                didSavedAPage = true;
+                            }
+                        }
+                        if(!didSavedAPage){
+                            isPageSaved = true;
+                            isSavingPage = false;
+                        }
                     } catch (e) { onBleError(e); }
                 }
                 return false;
@@ -604,14 +723,10 @@ module ActiveLookSDK {
             _log("tearDownDevice", [ActiveLookSDK.device]);
             time = null;
             cmdStacking = null;
-            var newBuffers = [];
-            var newValues = [];
-            for (var i = 0; i < layouts.size(); i ++) {
-                newBuffers.add(null);
-                newValues.add("");
-            }
-            buffers = newBuffers;
-            values = newValues;
+            cmdMaxSize = 0;
+            freeSpace = null;
+            glassesPageList = [];
+            glassesPageBuffer = [];
             ActiveLookSDK.isScanning               = false;
             ActiveLookSDK.isPairing                = false;
             ActiveLookSDK.isActivatingGestureNotif = false;
@@ -624,12 +739,22 @@ module ActiveLookSDK {
             ActiveLookSDK.batteryLevel             = null;
             ActiveLookSDK.isReadingFirmwareVersion = false;
             ActiveLookSDK.firmwareVersion          = null;
-            ActiveLookSDK.isUpdatingBleParams      = false;
-            ActiveLookSDK.isBleParamsUpdated       = false;
             ActiveLookSDK.isReadingCfgVersion      = false;
             ActiveLookSDK.cfgVersion               = null;
+            ActiveLookSDK.isReadingFreeSpace       = false;
+            ActiveLookSDK.isFreeSpaceRead          = false;
+            ActiveLookSDK.isDeletingLessUsedCfg    = false;
+            ActiveLookSDK.isLessUsedCfgDeleted     = false;
+            
+            ActiveLookSDK.isSavingPage             = false;
             ActiveLookSDK.isUpdatingALSSensor      = false;
             ActiveLookSDK.isUpdatingGestureSensor  = false;
+            ActiveLookSDK.isReadingPageList        = false;
+            ActiveLookSDK.isPagesRead              = false;
+            ActiveLookSDK.isReadingPages           = false;
+            ActiveLookSDK.isReadingPageList        = false;
+            ActiveLookSDK.isPageListRead           = false;
+            isWritingCharacteristic = false;
         }
 
         //! Override ActiveLookBLE.ActiveLook.ActiveLookDelegate.onCharacteristicChanged
@@ -649,7 +774,9 @@ module ActiveLookSDK {
                     if (value[0] != 0x01) {
                         _log("onCharacteristicChanged", ["Expecting gesture value 0x01", value]);
                     }
-                    self.flushCmdStacking();
+                    if (cmdStacking != null){
+                        self.flushCmdStacking();
+                    }
                     listener.onGestureEvent();
                     break;
                 }
@@ -657,11 +784,54 @@ module ActiveLookSDK {
                     if (value.size() >= 2 && value[0] == 0xFF) {
                         switch (value[1]) {
                             case 0xD1 :{ // cfgRead
-                            	cfgVersion = value[7];
+                            	cfgVersion = byteArrayToInt(value.slice(4,8),false);
                                 isReadingCfgVersion = false;
                                 _log("onCharacteristicChanged", ["cfgVersion", cfgVersion]);
                                 listener.onCfgVersionEvent(cfgVersion);
                                 setUpDevice();
+                                break;
+                            }
+                            case 0xD7 :{ // freeSpace
+                                var newFreeSpace = byteArrayToInt(value.slice(8,12),false);
+                                _log("onCharacteristicChanged", ["freeSpace", newFreeSpace, freeSpace ]);
+                                freeSpace = freeSpace == null || freeSpace != newFreeSpace ? newFreeSpace : -1;
+                                isReadingFreeSpace = false;
+                                isFreeSpaceRead = true;
+                                //Check if there is enough free space available
+                                if(freeSpace > -1 && freeSpace < freeSpaceLimit){ //need to delete cfg
+                                    isDeletingLessUsedCfg = false;
+                                    isLessUsedCfgDeleted  = false;
+                                }else{ //don't need to delete cfg
+                                    isDeletingLessUsedCfg = false;
+                                    isLessUsedCfgDeleted = true;
+                                }
+                                listener.onFreeSpaceEvent(freeSpace);
+                                setUpDevice();
+                                break;
+                            }
+                            case 0x85 :{ // pageList
+                                var pageList = value.slice(4, value.size() - 1);
+                                for (var i = offsetIdPage; i <= offsetIdPage + 3; i++) {
+                                    if (pageList.indexOf(i) != -1) {
+                                        glassesPageList.add(i);
+                                    }
+                                }
+                                _log("onCharacteristicChanged", ["pageList", glassesPageList]);
+                                isReadingPageList = false;
+                                isPageListRead = true;
+                                setUpDevice();
+                                break;
+                            }
+                            case 0x81 :{ // pageGet
+                            	var id = byteArrayToInt(value.slice(4,5),false);
+                                var data = value.slice(4, value.size() - 1);
+                                glassesPageBuffer.add(data);
+                                _log("onCharacteristicChanged", ["pageGet", id, data]);
+                                if(glassesPageBuffer.size() == glassesPageList.size() ){
+                                    isReadingPages = false;
+                                    isPagesRead = true;
+                                    setUpDevice();
+                                }
                                 break;
                             }
                             // case 0x0A: { // Settings
@@ -671,7 +841,7 @@ module ActiveLookSDK {
                             //     break;
                             // }
                             default: {
-                                System.println("__characteristicUpdate("+ characteristic.getUuid().toString() + ", " + value.toString()+")");
+                                _log("__characteristicUpdate",[characteristic.getUuid().toString(), value.toString()]);
                             }
                         }
                         break;
@@ -746,13 +916,9 @@ module ActiveLookSDK {
         }
         //! Override ActiveLookBLE.ActiveLook.ActiveLookDelegate.onCharacteristicWrite
         function onCharacteristicWrite(characteristic as Toybox.BluetoothLowEnergy.Characteristic, status as Toybox.BluetoothLowEnergy.Status) as Void {
+            isWritingCharacteristic = false;
             _log("onCharacteristicWrite", [characteristic.getUuid(), status]);
-            if (isUpdatingBleParams && !isBleParamsUpdated) {
-                isUpdatingBleParams = false;
-                if (status == Toybox.BluetoothLowEnergy.STATUS_SUCCESS) {
-                    isBleParamsUpdated = true;
-                }
-            }else if (isUpdatingALSSensor && !isALSSensorUpdated) {
+            if (isUpdatingALSSensor && !isALSSensorUpdated) {
                 isUpdatingALSSensor = false;
                 if (status == Toybox.BluetoothLowEnergy.STATUS_SUCCESS) {
                     isALSSensorUpdated = true;
@@ -762,11 +928,25 @@ module ActiveLookSDK {
                 if (status == Toybox.BluetoothLowEnergy.STATUS_SUCCESS) {
                     isGestureSensorUpdated = true;
                 }
+            } else if(isDeletingLessUsedCfg && !isLessUsedCfgDeleted){
+                isDeletingLessUsedCfg = false;
+                if (status == Toybox.BluetoothLowEnergy.STATUS_SUCCESS) {
+                    isLessUsedCfgDeleted = true;
+                    isReadingFreeSpace   = false;
+                    isFreeSpaceRead = false;
+                }
+            } else if(isSavingPage && !isPageSaved){
+                isSavingPage = false;
+                if (status == Toybox.BluetoothLowEnergy.STATUS_SUCCESS) {
+                    isPageSaved = true;
+                }
             }else {
                 // TODO: Refactor to avoid callback like this
                 var _cb = _cbCharacteristicWrite;
                 if (_cb != null) {
                     _cb.invoke(characteristic, status);
+                }else{
+                    self.sendRawCmd([]b);
                 }
             }
         }
@@ -846,11 +1026,64 @@ module ActiveLookSDK {
             ActiveLookSDK.device = device;
         }
 
+        function cfgWrite() {
+            try {
+                var data = [0x41, 0x4C, 0x6F, 0x6F, 0x4B]b; // ALooK Magic number
+                data.addAll(numberToFixedSizeByteArray(cfgVersion, 5)); // version
+                data.addAll([0x9E, 0x56, 0x5B, 0xF9]b); // ALooK Magic number
+                self.sendRawCmd(self.commandBuffer(0xD0, data));
+            } catch (e) {
+                isSavingPage = false;
+                onBleError(e);
+            }
+        }
+
+        function pageSave(buffer) {
+            try {
+                _log("pageSave",[buffer]);
+                self.sendRawCmd(self.commandBuffer(0x80, buffer));
+            } catch (e) {
+                isSavingPage = false;
+                onBleError(e);
+            }
+        }
+
+
+        function pageDisplay(id, buffer) {
+            if(buffer.size() == 0){return;}
+            var idOffsetted = id + offsetIdPage;
+            _log("pageDisplay",[idOffsetted]);
+            var data = numberToByteArray(idOffsetted);
+            data.addAll(buffer);
+            self.sendRawCmd(self.commandBuffer(0x86, data));
+        }
+
+        function widgetsDisplay() {
+            for (var i = 0; i < $.widgets.size(); i++) {
+                _log("widgetDisplay",[i]);
+                self.sendRawCmd(self.commandBuffer(0x3A, $.widgets[i]));
+            }
+        }
 
         //! Override ActiveLookBLE.ActiveLook.ActiveLookDelegate.onBleError
         function onBleError(exception as Toybox.Lang.Exception) as Void {
             _log("onBleError", [exception.getErrorMessage()]);
             listener.onBleError(exception);
+        }
+   
+        function splitString(input as Toybox.Lang.String, delimiter as Toybox.Lang.String) as Toybox.Lang.Array {
+            var result = [];
+            var current = "";
+            for (var i = 0; i < input.length(); i++) {
+                if (input.substring(i, i + 1).equals(delimiter)) {
+                    result.add(current);
+                    current = "";
+                } else {
+                    current += input.substring(i, i + 1);
+                }
+            }
+            result.add(current);
+            return result;
         }
 
     }

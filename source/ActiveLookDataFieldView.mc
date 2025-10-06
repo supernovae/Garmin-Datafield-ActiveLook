@@ -27,7 +27,7 @@ using ActiveLook.Laps;
 (:debug)   function log(msg as Toybox.Lang.String, data as Toybox.Lang.Object or Null) as Void {
     if (data instanceof Toybox.Lang.ByteArray) { data = arrayToHex(data); }
     if (data instanceof Toybox.Lang.Exception) { data.printStackTrace() ; data = data.getErrorMessage(); }
-    Toybox.System.println(Toybox.Lang.format("[D]$1$ $2$", [msg, data]));
+    Toybox.System.println(Toybox.Lang.format("[D]$1$ $2$ $3$", [Toybox.System.getTimer(), msg, data]));
 }
 
 var sdk as ActiveLookSDK.ALSDK = null as ActiveLookSDK.ALSDK;
@@ -41,6 +41,8 @@ var tempo_lap_freeze as Lang.Number = -1;
 var tempo_congrats as Lang.Number = 1;
 var currentLayouts as Lang.Array<Layouts.GeneratorArguments> = [] as Lang.Array<Layouts.GeneratorArguments>;
 var runningDynamics as Toybox.AntPlus.RunningDynamics or Null = null;
+var bikePower as Toybox.AntPlus.BikePower or Null = null;
+var widgets = [];
 
 // ToDo : différence pause stop
 // 1) Event onTimerStop  devrait être considéré comme un onTimerPause
@@ -57,26 +59,7 @@ var runningDynamics as Toybox.AntPlus.RunningDynamics or Null = null;
 
 (:typecheck(false))
 function resetGlobals() as Void {
-    try {
-        var _ai = "screens";
-        if (Toybox.Activity has :getProfileInfo) {
-            var profileInfo = Toybox.Activity.getProfileInfo();
-            if (profileInfo has :sport) {
-                switch (profileInfo.sport) {
-                    case Toybox.Activity.SPORT_RUNNING: { _ai = "run";     break; }
-                    case Toybox.Activity.SPORT_CYCLING: { _ai = "bike";    break; }
-                    default:                            { _ai = "screens"; break; }
-                }
-            }
-        }
-        $.pagesSpec = PageSettings.strToPages(Application.Properties.getValue(_ai), "(1,12,2)(15,4,2)(10,18,22)(0)");
-    } catch (e) {
-        $.pagesSpec = PageSettings.strToPages("(1,12,2)(15,4,2)(10,18,22)(0)", null);
-    }
-    // $.pagesSpec = PageSettings.strToPages(
-    //     "0, 1,2,3,4,5,6,7,8,9,10,11,(1),(2,3),(4,5,6),(7,8,9,10),(11,12,13,14,15,16),(17,18,19,20,21,22),(23,24,25,27,28,29)",
-    // "1,2,3,0");
-    // $.pagesSpec = PageSettings.strToPages("1,2,3,0", "1,2,3,0");
+    $.pagesSpec = $.sdk.userPages;
     $.pageIdx = 0;
     $.swipe = false;
     $.tempo_off = -1;
@@ -181,14 +164,18 @@ function updateFields() as Void {
     if ($.tempo_off == 0) {
         return;
     }
-    $.sdk.flushCmdStackingIfSup(200);
-    $.sdk.holdGraphicEngine();
+    var buffer = []b;
+    $.widgets = [];
     for (var i = 0; i < after; i++) {
         var asStr = Layouts.get($.currentLayouts[i]);
-        log("updateFields", [i, asStr, $.currentLayouts]);
-        $.sdk.updateLayoutValue($.currentLayouts[i][:id], asStr);
+        log("updateFields", [$.pageIdx, i, asStr, $.currentLayouts]);
+        if(asStr.size() == 1){
+            continue;
+        }
+        buffer.addAll(asStr);
     }
-    $.sdk.flushGraphicEngine();
+    $.sdk.widgetsDisplay();
+    $.sdk.pageDisplay($.pageIdx, buffer);
 }
 
 (:typecheck(false))
@@ -211,8 +198,8 @@ class DataFieldDrawable extends WatchUi.Drawable {
         var midX = dc.getWidth() / 2d;                // x 50%
         var midY = dc.getHeight() * 3d / 5d;          // y 60%
         if(self.updateMsg != null && self.updateMsgSecondRow != null && self.updateMsgThirdRow != null){
-            dc.drawText(midX, midY - 40d, Graphics.FONT_XTINY, self.updateMsg, justify); // (50%, 20%)
-            dc.drawText(midX, midY - 20d, Graphics.FONT_XTINY, self.updateMsgSecondRow, justify); // (50%, 40%)
+            dc.drawText(midX, midY - 50d, Graphics.FONT_XTINY, self.updateMsg, justify); // (50%, 20%)
+            dc.drawText(midX, midY - 25d, Graphics.FONT_XTINY, self.updateMsgSecondRow, justify); // (50%, 40%)
             dc.drawText(midX, midY, Graphics.FONT_XTINY, self.updateMsgThirdRow, justify); // (50%, 60%)
         }else if (self.updateMsg != null) {
             dc.drawText(midX, midY / 4, Graphics.FONT_XTINY, "ActiveLook", justify); // (50%, 15%)
@@ -255,16 +242,19 @@ class ActiveLookDataFieldView extends WatchUi.DataField {
     var _nextGestureStatus = Toybox.Application.Properties.getValue("is_gesture_enable") as Toybox.Lang.Boolean;
     var _currentAlsStatus = Toybox.Application.Properties.getValue("is_als_enable") as Toybox.Lang.Boolean;
     var _nextAlsStatus = Toybox.Application.Properties.getValue("is_als_enable") as Toybox.Lang.Boolean;
-    
+
     private var canvas as DataFieldDrawable = new DataFieldDrawable();
 
     function initialize() {
         DataField.initialize();
-        $.resetGlobalsNext();
         $.sdk = new ActiveLookSDK.ALSDK(self);
+        $.resetGlobalsNext();
         View.setLayout([self.canvas]);
         if(Toybox.AntPlus has :RunningDynamics) {
     		runningDynamics = new Toybox.AntPlus.RunningDynamics(null);
+		}
+        if(Toybox.AntPlus has :BikePower) {
+    		bikePower = new Toybox.AntPlus.BikePower(null);
 		}
     }
 
@@ -276,17 +266,21 @@ class ActiveLookDataFieldView extends WatchUi.DataField {
     function compute(info) {
         _nextGestureStatus = Toybox.Application.Properties.getValue("is_gesture_enable");
         _nextAlsStatus = Toybox.Application.Properties.getValue("is_als_enable");
+        var bp = bikePower != null ? bikePower.getCalculatedPower(): null ;
+        if(bp != null){
+            AugmentedActivityInfo.computeBikePower(bp.power);
+        }
         AugmentedActivityInfo.accumulate(info);
         AugmentedActivityInfo.compute(info);
         var rdd = null;
         if (runningDynamics != null) {
             rdd = runningDynamics.getRunningDynamics();
-            ActiveLook.Laps.accumulateRunningDynamics(rdd);
+            ActiveLook.Laps.accumulateRunningDynamics(rdd,$.tempo_lap_freeze != -1);
             AugmentedActivityInfo.accumulateRunningDynamics(rdd);
             AugmentedActivityInfo.computeRunningDynamics(rdd);
         }
-        if ($.tempo_lap_freeze == -1) {
-            ActiveLook.Laps.compute(info);
+        if ($.tempo_pause == -1) {
+            ActiveLook.Laps.compute(info,$.tempo_lap_freeze != -1);
             if (rdd != null) {
                 ActiveLook.Laps.computeRunningDynamics(rdd);
             }
@@ -340,26 +334,6 @@ class ActiveLookDataFieldView extends WatchUi.DataField {
                 self.onSettingClickAlsEvent();
             }
         }
-        // if (runningDynamics != null) {
-		//     var __rd = runningDynamics.getRunningDynamics();
-		//     if (__rd != null) {
-		//         var stepPerMinutes = __rd.cadence;
-		//         var verticalOscillation = __rd.verticalOscillation;
-		//         var groundContactTime = __rd.groundContactTime;
-		//         var stepLength = __rd.stepLength;
-
-		//         var data = []b;
-        //         data.addAll($.sdk.numberToFixedSizeByteArray(250, 2));
-        //         data.addAll($.sdk.numberToFixedSizeByteArray(170, 2));
-        //         data.addAll([4, 3, 15]b);
-        //         data.addAll($.sdk.stringToPadByteArray(
-        //             Toybox.Lang.format("$1$", [verticalOscillation]), null, null
-        //         ));
-        //         var fullBuffer = $.sdk.commandBuffer(0x01, []b) as Lang.ByteArray; // Clear Screen
-        //         fullBuffer.addAll($.sdk.commandBuffer(0x37, data)); // Text
-        //         $.sdk.sendRawCmd(fullBuffer);
-		//     }
-		// }
         return null;
     }
 
@@ -367,6 +341,7 @@ class ActiveLookDataFieldView extends WatchUi.DataField {
     //! This method is called when the activity timer goes from a stopped state to a started state.
     //! If the activity timer is running when the app is loaded, this event will run immediately after startup.
     function onTimerStart() {
+        log("Event", ["onTimerStart"]);
         if ($.tempo_pause == -1) { // If not in pause mode, it is a new session
             AugmentedActivityInfo.onSessionStart();
         }
@@ -378,6 +353,7 @@ class ActiveLookDataFieldView extends WatchUi.DataField {
     //! The paused state occurs when the auto-pause feature pauses the timer.
     //! If the activity timer is paused when the app is loaded, this event will run immediately after startup.
     function onTimerPause() {
+        log("Event", ["onTimerPause"]);
         $.tempo_congrats = -1;
         if ($.tempo_off == -1) {
             $.tempo_pause = 6;
@@ -395,6 +371,7 @@ class ActiveLookDataFieldView extends WatchUi.DataField {
     //! The activity time has resumed.
     //! This method is called when the activity timer goes from a paused state to a running state.
     function onTimerResume() {
+        log("Event", ["onTimerResume"]);
         $.tempo_pause = -1;
         $.tempo_congrats = -1;
         if ($.tempo_off == -1) {
@@ -407,12 +384,14 @@ class ActiveLookDataFieldView extends WatchUi.DataField {
     //! The activity timer has stopped.
     //! This method is called when the activity timer goes from a running state to a stopped state.
     function onTimerStop() {
+        log("Event", ["onTimerStop"]);
         self.onTimerPause(); // In fact, it is a pause. The reset event is the real stop.
     }
 
     //! The current activity has ended.
     //! This method is called when the time has stopped and current activity is ended.
     function onTimerReset() as Void {
+        log("Event", ["onTimerReset"]);
         $.tempo_pause = -1;
         if ($.tempo_off == -1) {
             $.tempo_congrats = 6;
@@ -429,6 +408,7 @@ class ActiveLookDataFieldView extends WatchUi.DataField {
     }
 
     function onTimerLap() as Void {
+        log("Event", ["onTimerLap"]);
         AugmentedActivityInfo.addLap();
         $.tempo_lap_freeze = 10;
         $.tempo_pause = -1;
@@ -462,10 +442,11 @@ class ActiveLookDataFieldView extends WatchUi.DataField {
     function onFirmwareEvent(major as Toybox.Lang.Number, minor as Toybox.Lang.Number, patch as Toybox.Lang.Number) as Void {
         $.log("onFirmwareEvent", [major, minor, patch]);
         major -= 4;
-        minor -= 6;
+        minor -= 12;
+        patch -= 2;
         if (major > 0) {
             self.canvas.updateMsg = Application.loadResource(Rez.Strings.update_datafield);
-        } else if (major < 0 || minor < 0) {
+        } else if (major < 0 || (major == 0 && minor < 0) || (major == 0 && minor == 0 && patch < 0)){
             self.canvas.updateMsg = Application.loadResource(Rez.Strings.update_glasses);
             self.canvas.updateMsgSecondRow = Application.loadResource(Rez.Strings.update_glasses_second_row);
             self.canvas.updateMsgThirdRow = Application.loadResource(Rez.Strings.update_glasses_third_row);
@@ -480,11 +461,19 @@ class ActiveLookDataFieldView extends WatchUi.DataField {
     }
     function onCfgVersionEvent(cfgVersion as Toybox.Lang.Number) as Void {
         $.log("onCfgVersionEvent", [cfgVersion]);
-        cfgVersion -= 12;
+        cfgVersion -= 17;
         if (cfgVersion < 0 && self.canvas.updateMsg == null) {
             self.canvas.updateMsg = Application.loadResource(Rez.Strings.update_glasses);
             self.canvas.updateMsgSecondRow = Application.loadResource(Rez.Strings.update_glasses_second_row);
             self.canvas.updateMsgThirdRow = Application.loadResource(Rez.Strings.update_glasses_third_row);
+        }
+    }
+    function onFreeSpaceEvent(freeSpace as Toybox.Lang.Number) as Void {
+        $.log("onFreeSpaceEvent", [freeSpace]);
+        if (freeSpace < 0 && self.canvas.updateMsg == null) {
+            self.canvas.updateMsg = Application.loadResource(Rez.Strings.free_space_glasses);
+            self.canvas.updateMsgSecondRow = Application.loadResource(Rez.Strings.free_space_glasses_second_row);
+            self.canvas.updateMsgThirdRow = Application.loadResource(Rez.Strings.free_space_glasses_third_row);
         }
     }
     function onGestureEvent() as Void {
@@ -495,6 +484,12 @@ class ActiveLookDataFieldView extends WatchUi.DataField {
     function onBatteryEvent(batteryLevel as Toybox.Lang.Number) as Void {
         $.log("onBatteryEvent", [batteryLevel]);
         $.battery = batteryLevel;
+    }
+    function onNotEnoughBatteryEvent(batteryLevel as Toybox.Lang.Number) as Void {
+        $.log("onNotEnoughBatteryEvent", [batteryLevel]);
+        self.canvas.updateMsg = Application.loadResource(Rez.Strings.not_enough_battery_glasses);
+        self.canvas.updateMsgSecondRow = Application.loadResource(Rez.Strings.not_enough_battery_glasses_second_row);
+        self.canvas.updateMsgThirdRow = Application.loadResource(Rez.Strings.not_enough_battery_glasses_third_row);
     }
     function onDeviceReady() as Void {
         $.log("onDeviceReady", []);
@@ -574,10 +569,11 @@ function resetGlobalsNext() as Void {
 function onScanResult(scanResult as Toybox.BluetoothLowEnergy.ScanResult) as Void {
     $.log("onScanResult", [scanResult]);
     var deviceName = scanResult.getDeviceName();
+    var glassesArray =  $.sdk.splitString($.glassesName, ",");
     if (scanResult.getDeviceName() == null) { deviceName = ""; }
     if ($.glassesName.equals("")) {
         Toybox.Application.Properties.setValue("glasses_name", deviceName);
         $.glassesName = deviceName as Toybox.Lang.String;
-    } else if (!$.glassesName.equals(deviceName)) { return; }
+    } else if (glassesArray.indexOf(deviceName) < 0) { return; }
     $.sdk.connect(scanResult);
 }

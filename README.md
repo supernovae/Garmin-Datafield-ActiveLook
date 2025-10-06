@@ -17,7 +17,7 @@ Download and install the [SDK Manager](https://developer.garmin.com/connect-iq/s
 ## SDK
 
 Once the SDK manager is installed, download a version of the SDK to link your project against.
-At the time of this writing (2024/04/18), the version used to develop is `6.3.1`.
+At the time of this writing (2025/07/08), the version used to develop is `8.1.1`.
 
 ## Monkey C Visual Studio Code Extension
 
@@ -32,8 +32,14 @@ Next, download [compatible Garmin device](#compatible-devices) to run the projec
 Once the environment is set up correctly, run the [run.sh](run.sh) script with the `run` command:
 > $ ./run.sh run
 
-To run on a [compatible Garmin device](#compatible-devices), eg fenix7 one:
+To run in debug mode on a [compatible Garmin device](#compatible-devices), e.g., a fenix7:
 > $ ./run.sh --device fenix7 run
+
+To run in release mode on a [compatible Garmin device](#compatible-devices), eg fenix7 one:
+> $ ./run.sh --device fenix7 --release run
+
+To run tests on a [compatible Garmin device](#compatible-devices), eg fenix7 one:
+> $ ./run.sh --device fenix7 test
 
 The `help` command will list the available commands.
 > $ ./run.sh help
@@ -43,6 +49,7 @@ The `help` command will list the available commands.
   simu     Start the simulator
   run      Run in the simulator
   debug    Debug with the simulator
+  test     Run tests
   clean    Remove bin directory - useful if the simulator is unresponsive
   doc      Generate documentation - in `/bin/doc/`
   pack     Build the datafield as a Connect IQ package
@@ -76,176 +83,203 @@ The datafield is available on the ConnectIQ Store : [ActiveLook - Data Field for
 ## Composition
 
 The project is composed of the following files:
+  - `ActiveLookDataField` folder:
+    - `Assets` folder:\
+      Contains all the assets (images, fonts) used for the project, as well as scripts to generate said assets (work in progress - no documentation yet).
 
-  - `Assets` folder:
-    Contains all the assets (images, fonts) used for the project, as well as scripts to generate said assets (work in progress - no documentation yet).
+      - `base_xmls` folder:\
+        Contains different strings.xml files versions for CI release builds (beta/prod)
 
-  - `bin` folder:
-    Generated folder and content
+      - `bin` folder:
+        Generated folder and content
 
-  - `ressources` folder:
-    - `settings` folder:
-      - `properties.xml`:
-        - `glasses_name`: the name of the glasses
-        - `screens`: Defines the screen quadrant available to display the datafield in, by default
-        - `run`: Defines the screen quadrant available to display the datafield in, for the run activity
-        - `bike`: Defines the screen quadrant available to display the datafield in, for the bike activity
-        - `is_auto_loop`: Enable or disabled Auto loop on data sreens
-        - `loop_timer`: Defines the timer in second between each swipe
+      - `key` folder:\
+        **VERY SENSITIVE FILE!**
 
-          Depending on the activity choosen, the user will be able to display different screens presenting differents metrics  (none, 1 or more as available).
-          The datafield offers preset screens, listed in the property string.
+        Included in the repo for convenience. 
+        This key is used to push the datafield on the Garmin store, updates, etc... 
 
-          For examples the string:
-          ```xml 
-          <property id="run" type="string">(1,2,4)(1,2,12)(10,18,15)(0)</property>
-          ```
-          states that when the user selects the `run` activity, the preset choices displays are:
-            - `(1,2,4)`: Chrono & Distance & Heart rate, on page 1
-            - `(1,2,12)`: Chrono & Distance & Speed, on page 2
-            - `(10,18,15)`: Power 3s & Cadence & Pace, on page 3
-            - `(0)`: page 4 to turn the screen off
+        **DO NOT LOSE, NOR SHARE, NOR TEMPER WITH!**
 
-          The following table lists the available metrics:
-          | id |               Name               | Metric | Full-imp | Half | Metric   -  Imperial |
-          |:--:|:--------------------------------:|:------:|:--------:|:----:|:--------------------:|
-          | 0  | Empty page                       | 100    |          |      |                      |
-          | 1  | Chrono                           | 11     |          | 43   |                      |
-          | 2  | Distance                         | 12     | 35       | 46   |        km - mi       |
-          | 3  | Distance To Destination          | 101    | 102      | 103  |        km - mi       |
-          | 4  | Heart Rate                       | 21     |          | 49   |          bpm         |
-          | 5  | Max HeartRate                    | 29     |          | 61   |          bpm         |
-          | 6  | Average Heart Rate               | 24     |          | 52   |          bpm         |
-          | 7  | Power                            | 22     |          | 56   |           w          |
-          | 8  | Max Power                        | 30     |          | 62   |           w          |
-          | 9  | Average Power                    | 25     |          | 53   |           w          |
-          | 10 | Power 3s                         | 42     |          | 65   |           w          |
-          | 11 | Power Normalized                 | 69     |          | 70   |           w          |
-          | 12 | Speed                            | 13     | 33       | 44   |      km/h - mph      |
-          | 13 | Max Speed                        | 31     | 41       | 63   |      km/h - mph      |
-          | 14 | Average Speed                    | 14     | 34       | 45   |      km/h - mph      |
-          | 15 | Pace                             | 15     | 37       | 48   |    min/km - min/mi   |
-          | 16 | Fastest Pace                     | 104    | 105      | 106  |    min/km - min/mi   |
-          | 17 | Average Pace                     | 66     | 67       | 68   |    min/km - min/mi   |
-          | 18 | Cadence                          | 16     |          | 55   |rpm (bike) - spm (run)|
-          | 19 | Max Cadence                      | 28     |          | 60   |rpm (bike) - spm (run)|
-          | 20 | Average Cadence                  | 23     |          | 51   |rpm (bike) - spm (run)|
-          | 21 | Altitude                         | 18     | 38       | 50   |         m - ft       |
-          | 22 | Total Ascent                     | 19     | 36       | 47   |         m - ft       |
-          | 23 | Total Descent                    | 26     | 39       | 57   |         m - ft       |
-          | 24 | Average  Ascent Speed            | 20     | 40       | 59   |       m/h - ft/h     |
-          | 25 | Total Calories                   | 17     |          | 54   |          kCal        |
-          | 26 | Energy Expenditure               | 27     |          | 58   |        Kcal/min      |
-          | 27 | Ground Contact Time              | 189    |          | 190  |           ms         |
-          | 28 | Average Ground Contact Time      | 189    |          | 190  |           ms         |
-          | 29 | Vertical Oscillation             | 200    | 201      | 202  |         m - ft       |
-          | 30 | Average Vertical Oscillation     | 200    | 201      | 202  |         m - ft       |
-          | 31 | Step Length                      | 194    | 195      | 196  |        cm - in       |
-          | 32 | Average Step Length              | 194    | 195      | 196  |        cm - in       |
-          | 33 | Lap Chrono                       | 11     |          | 43   |                      |
-          | 34 | Lap Elapsed Distance             | 12     | 35       | 46   |        km - mi       |
-          | 35 | Lap Average Heart Rate           | 24     |          | 52   |          bpm         |
-          | 36 | Lap Average Power                | 25     |          | 53   |           w          |
-          | 37 | Lap Average Speed                | 14     | 34       | 45   |      km/h - mph      |
-          | 38 | Lap Average Pace                 | 66     | 67       | 68   |    min/km - min/mi   |
-          | 39 | Lap Average Cadence              | 23     |          | 53   |rpm (bike) - spm (run)|
-          | 40 | Lap Total Ascent                 | 19     | 36       | 47   |         m - ft       |
-          | 41 | Lap Total Descent                | 26     | 39       | 57   |         m - ft       |
-          | 42 | Lap Average Ascent Speed         | 20     | 40       | 59   |       m/h - ft/h     |
-          | 43 | Lap Calories                     | 17     |          | 54   |          kCal        |
-          | 44 | Lap Average Ground Contact Time  | 189    |          | 190  |           ms         |
-          | 45 | Lap Average Vertical Oscillation | 200    | 201      | 202  |         m - ft       |
-          | 46 | Lap Average Step Length          | 194    | 195      | 196  |        cm - in       |
+      - `README_ASSETS` folder:\
+        Contains images and other assets used in the README documentation, such as screenshots or diagrams.
 
-          For more informations about the screens, see [Configure your data screens](https://help.activelook.net/en/articles/5290907-activelook-garmin#h_cdce7cb4b9).
+      - `ressources` folder:
+        - `settings` folder:
+          - `properties.xml`:
+            - `glasses_name`: the name of the glasses
+            - `screens`: Defines the screen quadrant available to display the datafield in, by default
+            - `run`: Defines the screen quadrant available to display the datafield in, for the run activity
+            - `bike`: Defines the screen quadrant available to display the datafield in, for the bike activity
+            - `is_auto_loop`: Enable or disabled Auto loop on data sreens
+            - `loop_timer`: Defines the timer in second between each swipe
 
-      - `settings.xml`:\
-        Defines the settings that are editable using the `Garmin Connect` app.
-        In the simulator, these properties can be accessed and modified using the `File > Edit persistant storage > ...` menu items.
-    - `strings` folder:\
-      Localization file.
+              Depending on the activity choosen, the user will be able to display different screens presenting differents metrics  (none, 1 or more as available).
+              The datafield offers preset screens, listed in the property string.
 
-  - `scripts` folder:\
-    (work in progress - no documentation yet)
+              For examples the string:
+              ```xml 
+              <property id="run" type="string">(1,2,4)(1,2,12)(10,18,15)(0)</property>
+              ```
+              states that when the user selects the `run` activity, the preset choices displays are:
+                - `(1,2,4)`: Chrono & Distance & Heart rate, on page 1
+                - `(1,2,12)`: Chrono & Distance & Speed, on page 2
+                - `(10,18,15)`: Power 3s & Cadence & Pace, on page 3
+                - `(0)`: page 4 to turn the screen off
 
-  - `source` folder:
-    - `ActiveLook.mc`\
-      Defines the `ActiveLookBLE` module which handles the BLE communications. It is used by `ActiveLooSDK_next.mc`
+              The following table lists the available metrics:
+              | id |               Name               | Metric | Full-imp | Half | Metric   -  Imperial |
+              |:--:|:--------------------------------:|:------:|:--------:|:----:|:--------------------:|
+              | 0  | Empty page                       | 100    |          |      |                      |
+              | 1  | Chrono                           | 11     |          | 43   |                      |
+              | 2  | Distance                         | 12     | 35       | 46   |        km - mi       |
+              | 3  | Distance To Destination          | 101    | 102      | 103  |        km - mi       |
+              | 4  | Heart Rate                       | 21     |          | 49   |          bpm         |
+              | 5  | Max HeartRate                    | 29     |          | 61   |          bpm         |
+              | 6  | Average Heart Rate               | 24     |          | 52   |          bpm         |
+              | 7  | Power                            | 22     |          | 56   |           w          |
+              | 8  | Max Power                        | 30     |          | 62   |           w          |
+              | 9  | Average Power                    | 25     |          | 53   |           w          |
+              | 10 | Power 3s                         | 42     |          | 65   |           w          |
+              | 11 | Power Normalized                 | 69     |          | 70   |           w          |
+              | 12 | Speed                            | 13     | 33       | 44   |      km/h - mph      |
+              | 13 | Max Speed                        | 31     | 41       | 63   |      km/h - mph      |
+              | 14 | Average Speed                    | 14     | 34       | 45   |      km/h - mph      |
+              | 15 | Pace                             | 15     | 37       | 48   |    min/km - min/mi   |
+              | 16 | Fastest Pace                     | 104    | 105      | 106  |    min/km - min/mi   |
+              | 17 | Average Pace                     | 66     | 67       | 68   |    min/km - min/mi   |
+              | 18 | Cadence                          | 16     |          | 55   |rpm (bike) - spm (run)|
+              | 19 | Max Cadence                      | 28     |          | 60   |rpm (bike) - spm (run)|
+              | 20 | Average Cadence                  | 23     |          | 51   |rpm (bike) - spm (run)|
+              | 21 | Altitude                         | 18     | 38       | 50   |         m - ft       |
+              | 22 | Total Ascent                     | 19     | 36       | 47   |         m - ft       |
+              | 23 | Total Descent                    | 26     | 39       | 57   |         m - ft       |
+              | 24 | Average  Ascent Speed            | 20     | 40       | 59   |       m/h - ft/h     |
+              | 25 | Total Calories                   | 17     |          | 54   |          kCal        |
+              | 26 | Energy Expenditure               | 27     |          | 58   |        Kcal/min      |
+              | 27 | Ground Contact Time              | 189    |          | 190  |           ms         |
+              | 28 | Average Ground Contact Time      | 189    |          | 190  |           ms         |
+              | 29 | Vertical Oscillation             | 200    | 201      | 202  |         m - ft       |
+              | 30 | Average Vertical Oscillation     | 200    | 201      | 202  |         m - ft       |
+              | 31 | Step Length                      | 194    | 195      | 196  |        cm - in       |
+              | 32 | Average Step Length              | 194    | 195      | 196  |        cm - in       |
+              | 33 | Lap Chrono                       | 11     |          | 43   |                      |
+              | 34 | Lap Elapsed Distance             | 12     | 35       | 46   |        km - mi       |
+              | 35 | Lap Average Heart Rate           | 24     |          | 52   |          bpm         |
+              | 36 | Lap Average Power                | 25     |          | 53   |           w          |
+              | 37 | Lap Average Speed                | 14     | 34       | 45   |      km/h - mph      |
+              | 38 | Lap Average Pace                 | 66     | 67       | 68   |    min/km - min/mi   |
+              | 39 | Lap Average Cadence              | 23     |          | 53   |rpm (bike) - spm (run)|
+              | 40 | Lap Total Ascent                 | 19     | 36       | 47   |         m - ft       |
+              | 41 | Lap Total Descent                | 26     | 39       | 57   |         m - ft       |
+              | 42 | Lap Average Ascent Speed         | 20     | 40       | 59   |       m/h - ft/h     |
+              | 43 | Lap Calories                     | 17     |          | 54   |          kCal        |
+              | 44 | Lap Average Ground Contact Time  | 189    |          | 190  |           ms         |
+              | 45 | Lap Average Vertical Oscillation | 200    | 201      | 202  |         m - ft       |
+              | 46 | Lap Average Step Length          | 194    | 195      | 196  |        cm - in       |
+              | 47 | Widget HR Zone                   |        |          |      |                      |
 
-    - `ActiveLookActivityInfo.mc`\
-      Defines the modules `AugmentedActivityInfo`, `PageSettings`, and `Layouts`, all in the namespace `ActiveLook`.
+              For more informations about the screens, see [Configure your data screens](https://help.activelook.net/en/articles/5290907-activelook-garmin#h_cdce7cb4b9).
 
-      - `AugmentedActivityInfo` computes extra metrics from the `ActivityInfo` provided by ConnectIQ:
-        - `currentPace`
-        - `fastestPace`
-        - `averagePace`
-        - `threeSecPower`
-        - `normalizedPower`
-        - `averageAscentSpeed`
-        - --> These metrics are used in the datafield.
-      - `PageSettings` is used to arrange the differents layouts on a given page of the datafield.
-      - `Layouts` is in charge of formatting the data to best suit the type of data the given layout is displaying, together with the space available for said layout.
-      
-      This file is the one that is the most frequently modified, to support new devices, positions, layouts, etc...
+          - `settings.xml`:\
+            Defines the settings that are editable using the `Garmin Connect` app.
+            In the simulator, these properties can be accessed and modified using the `File > Edit persistant storage > ...` menu items.
+        - `strings` folder:\
+          Localization file.
 
-    - `ActiveLookDataFieldApp.mc`\
-      Stub generated automatically
+      - `scripts` folder:\
+        (work in progress - no documentation yet)
 
-    - `ActiveLookDataFieldView.m`\
-      It is the main entrypoint to the datafield.
+      - `source` folder:
+        - `test` folder:\
+          Contains test files, including unit and integration tests to verify the functionality.
+          To run the tests, use the provided run.sh script with the 'test' command
 
-      It defines, among other things, the `ActiveLookDataFieldView` class.
+        - `ActiveLook.mc`\
+          Defines the `ActiveLookBLE` module which handles the BLE communications. It is used by `ActiveLooSDK_next.mc`
 
-      The Connect IQ OS calls the `compute(info)` function every second (give and take a few milliseconds...).
-      The `info` parameters, of type `ActivityInfo`, holds the metrics provided by the Garmin device.
+        - `ActiveLookActivityInfo.mc`\
+          Defines the modules `AugmentedActivityInfo`, `PageSettings`, and `Layouts`, all in the namespace `ActiveLook`.
 
-      > If the device has connected sensor(s) (e.g. a heart rate sensor), then it will send the corresponding metric (in this case, the Heart Rate metric) thru the `ActivityInfo` object.
+          - `AugmentedActivityInfo` computes extra metrics from the `ActivityInfo` provided by ConnectIQ:
+            - `currentPace`
+            - `fastestPace`
+            - `averagePace`
+            - `threeSecPower`
+            - `normalizedPower`
+            - `averageAscentSpeed`
+            - --> These metrics are used in the datafield.
+          - `PageSettings` is used to arrange the differents layouts on a given page of the datafield.
+          - `Layouts` is in charge of formatting the data to best suit the type of data the given layout is displaying, together with the space available for said layout.
 
-      It holds the global variables, defines the drawing of the datafield, its updates, and its life-cycle.
+          This file is the one that is the most frequently modified, to support new devices, positions, layouts, etc...
 
-      It calls the `ActiveLookSDK_next.mc` to execute commands on the glasses.
-      See `Description > Sources > ActiveLookSDK_next.mc` for more details about the different commands
+        - `ActiveLookDataFieldApp.mc`\
+          Stub generated automatically
 
-    - `ActiveLookSDK_next.mc`\
-      It defines the `ActiveLookSDK` module. It is a basic version of the Android and iOS SDKs. 
-      It allows the datafield to interact with the ActiveLook Glasses' Firmware using the [ActiveLook® Programming Interface](https://github.com/ActiveLook/Activelook-API-Documentation/blob/main/ActiveLook_API.md)
-      Its only purpose it to format the commands and payload correcty.
+        - `ActiveLookDataFieldView.m`\
+          It is the main entrypoint to the datafield.
 
-      A list of all the [command indexes](https://github.com/ActiveLook/Activelook-API-Documentation/blob/main/ActiveLook_API.md#4-activelook-commands)
+          It defines, among other things, the `ActiveLookDataFieldView` class.
 
-  - `.project`\
-    generated file – Eclipse's remainder.
+          The Connect IQ OS calls the `compute(info)` function every second (give and take a few milliseconds...).
+          The `info` parameters, of type `ActivityInfo`, holds the metrics provided by the Garmin device.
 
-  - `barrel.jungle`\
-    generated file
+          > If the device has connected sensor(s) (e.g. a heart rate sensor), then it will send the corresponding metric (in this case, the Heart Rate metric) thru the `ActivityInfo` object.
 
-  - `GarminDeveloperKey`\
-    **VERY SENSITIVE FILE!**
+          It holds the global variables, defines the drawing of the datafield, its updates, and its life-cycle.
 
-    Included in the repo for convenience. 
-    This key is used to push the datafield on the Garmin store, updates, etc... 
-   
-    **DO NOT LOSE, NOR SHARE, NOR TEMPER WITH!**
- 
-  - `manifest.xml`\
-    defines the minimum sdk, required capabilities, langages, and devices compatible with the project.
- 
-  - `monkey.jungle`\
-    generated file
+          It calls the `ActiveLookSDK_next.mc` to execute commands on the glasses.
+          See `Description > Sources > ActiveLookSDK_next.mc` for more details about the different commands
 
-  - `README.md`\
-    this file
+        - `ActiveLookSDK_next.mc`\
+          It defines the `ActiveLookSDK` module. It is a basic version of the Android and iOS SDKs. 
+          It allows the datafield to interact with the ActiveLook Glasses' Firmware using the [ActiveLook® Programming Interface](https://github.com/ActiveLook/Activelook-API-Documentation/blob/main/ActiveLook_API.md)
+          Its only purpose it to format the commands and payload correcty.
 
-  - `run.sh`\
-    A script used to launch the project on one of the [compatible Garmin device](#compatible-devices) defined in the [manifest.xml file](manifest.xml).
-    - to run on the simulator of an edge1030
-      > ./run.sh --device edge1030 run
+          A list of all the [command indexes](https://github.com/ActiveLook/Activelook-API-Documentation/blob/main/ActiveLook_API.md#4-activelook-commands)
 
-    - to debug on the simulator of an edge1030
-      > ./run.sh --device edge1030 debug
+        - `Laps.mc`\
+          computes extra metrics from the `ActivityInfo` provided by ConnectIQ:
+            - `currentPace`
+            - `fastestPace`
+            - `averagePace`
+            - `threeSecPower`
+            - `normalizedPower`
+            - `averageAscentSpeed`
+            - --> These metrics are used in the datafield.
 
-    If the simulator becomes unresponsive, or it is not possible to launch the project
-    > ./run.sh clean
+      - `barrel.jungle`\
+        generated file
+
+      - `manifest.xml`\
+        defines the minimum sdk, required capabilities, langages, and devices compatible with the project.
+  
+      - `monkey.jungle`\
+        generated file
+
+      - `README.md`\
+        this file
+
+      - `run.sh`\
+        A script used to launch the project on one of the [compatible Garmin device](#compatible-devices) defined in the [manifest.xml file](manifest.xml).
+        - to run on the simulator of an edge1030
+          > ./run.sh --device edge1030 --release run
+
+        - to debug on the simulator of an edge1030
+          > ./run.sh --device edge1030 debug
+
+        If the simulator becomes unresponsive, or it is not possible to launch the project
+        > ./run.sh clean
+
+      - `run_cicd.sh`\
+        A script used for CICD  
+
+  - `cicd` folder:\
+    Contains CICD needed files
+  
+  - `docs` folder:\
+    Contains additional documentation files related to the project, such as guides, API references, or technical notes.
 
 # Assets generation
 
@@ -276,22 +310,41 @@ You can use a [nrf52840 dongle](https://www.nordicsemi.com/Products/Development-
 
 # Get logs from physical devices
 
-1. Connect your physical device to you PC or Mac 
+1. Connect your physical device to you PC or Mac
 2. On Mac you have to install [Android File Transfert](https://support.google.com/android/answer/9064445?hl=en#zippy=)
 3. Add empty text file  `/GARMIN/APPS/LOGS/ActiveLookApp.TXT`
+
+# Error Reporting Application (ERA)
+
+The following is a quick summary of the official [Getting Started](https://developer.garmin.com/connect-iq/core-topics/exception-reporting-tool/) tutorial.
+
+The ERA tool can be used to view your app’s crashes after it has been released on the store. If your app crashes on a device the error report will be collected and aggregated by the ERA server. These reports can be viewed for up to 30 days after a crash occurs. This tool is available in the bin folder of the SDK.
+
+1. Install [Monkey C Visual Studio Code Extension](#Monkey-C-Visual-Studio-Code-Extension)
+2. launch the graphical ERA tool, run the `Monkey C: Start ERA Viewer` command from the command palette of Visual Studio Code.
+3. Add a Developer.\
+![Era manage developers](README_assets/era_manage_developers.png)
+4. Hit the + to add your developer account. To add your developer account you'll need your developer id, which is in the app store URL when you click on your developer name. You also need to add a default developer key, which is used to authenticate your account.\
+![Era developer key](README_assets/era_developerKey.png)
+5. The crash report view allows you to view all uploaded crash reports for an app in the last 30 days. \
+![era viewing Crash Reports](README_assets/era_viewing_Crash_Reports.png)
 
 # History (YYYY/MM/DD)
 
 0. <a id="EDIT0">2022/08/05</a> Document creation.
 1. <a id="EDIT1">2023/04/24</a> Update metrics available & devices compatibility
 2. <a id="EDIT2">2023/09/28</a> Update assets generation, BLE on simulator & devices compatibility
-3. <a id="EDIT2">2024/06/06</a> How to get logs on physical device
+3. <a id="EDIT3">2024/06/06</a> How to get logs on physical device
+4. <a id="EDIT4">2025/03/26</a> Add HrZone & device compatibility
+5. <a id="EDIT5">2025/05/26</a> Add Error Reporting Application
+6. <a id="EDIT6">2025/07/08</a> Clean repo
 
 <!-- # Footnotes -->
 ## Compatible devices
 
 The compatible devices are listed in the file [manifest.xml](manifest.xml)\
-At the time of this [edit 1](#EDIT2) they are:
+At the time of this [edit 6](#EDIT6) they are:
+
 
 - approachs7042mm
 - approachs7047mm
@@ -299,15 +352,19 @@ At the time of this [edit 1](#EDIT2) they are:
 - d2mach1
 - descentmk2
 - descentmk2s
+- descentmk343mm
+- descentmk351mm
 - edge1030
 - edge1030plus
 - edge1040
+- edge1050
 - edge530
 - edge540
 - edge830
 - edge840
 - edgeexplore
 - edgeexplore2
+- enduro3
 - epix2
 - epix2pro42mm
 - epix2pro47mm
@@ -320,12 +377,19 @@ At the time of this [edit 1](#EDIT2) they are:
 - fenix6xpro
 - fenix7
 - fenix7pro
+- fenix7pronowifi
 - fenix7s
 - fenix7spro
 - fenix7x
 - fenix7xpro
-- fr165m
+- fenix7xpronowifi
+- fenix843mm
+- fenix847mm
+- fenix8solar47mm
+- fenix8solar51mm
+- fenixe
 - fr165
+- fr165m
 - fr245m
 - fr255
 - fr255m
@@ -333,11 +397,14 @@ At the time of this [edit 1](#EDIT2) they are:
 - fr255sm
 - fr265
 - fr265s
+- fr57042mm
+- fr57047mm
 - fr745
 - fr945
 - fr945lte
 - fr955
 - fr965
+- fr970
 - marq2
 - marq2aviator
 - marqadventurer
@@ -354,4 +421,6 @@ At the time of this [edit 1](#EDIT2) they are:
 - venu3
 - venu3s
 - venusq2m
+- venux1
 - vivoactive5
+- vivoactive6

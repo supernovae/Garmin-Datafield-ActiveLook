@@ -20,5 +20,12 @@
     <string id="update_glasses">Update your glasses</string>
     <string id="update_glasses_second_row">using ActiveLook</string>
     <string id="update_glasses_third_row">mobile application</string>
-
+    
+    <string id="free_space_glasses">Not enough storage</string>
+    <string id="free_space_glasses_second_row">space available</string>
+    <string id="free_space_glasses_third_row">contact support</string>
+    
+    <string id="not_enough_battery_glasses">Insufficient glasses battery</string>
+    <string id="not_enough_battery_glasses_second_row">At least 5%</string>
+    <string id="not_enough_battery_glasses_third_row">is required.</string>
 </strings>

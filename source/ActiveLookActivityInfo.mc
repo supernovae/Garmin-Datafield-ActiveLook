@@ -5,6 +5,7 @@ using Toybox.StringUtil;
 using Toybox.System;
 using ActiveLook.Laps;
 using Toybox.AntPlus;
+using Toybox.UserProfile;
 
 function mapToBounds(v as Lang.Number or Null, lo as Lang.Number, hi as Lang.Number) as Lang.Number {
     if (v == null) { return lo; }
@@ -24,6 +25,8 @@ module ActiveLook {
         var chrono as Lang.Array<Lang.Number>?;
 
         var currentPace as Lang.Float?;
+        var bikePower as Lang.Float?;
+        var power     as Lang.Float?;
         var fastestPace as Lang.Float?;
         var averagePace as Lang.Float?;
 
@@ -51,11 +54,18 @@ module ActiveLook {
         var __asSamples as Lang.Array<Lang.Number> = [];
         var averageAscentSpeed as Lang.Float?;
 
+        var _hrZones as Lang.Array<Lang.Number> = []; 
+        var currentHrZone as Lang.Array<Lang.Number> = [1,0,-1];
+
+        var _currentWidget = []b;
+
         function onSessionStart() {
             __ai = null;
             __rdd = null;
             chrono  = null;
             currentPace = null;
+            bikePower = null;
+            power = null;
             fastestPace = null;
             averagePace = null;
             __pSamples = [];
@@ -76,7 +86,18 @@ module ActiveLook {
             __totalStepLength = 0;
             averageStepLength = null;
             __asSamples = [];
-            averageAscentSpeed = null;
+            averageAscentSpeed = null;    
+            currentHrZone = [1,0,-1];
+            if (Toybox.Activity has :getProfileInfo) {
+                var profileInfo = Toybox.Activity.getProfileInfo();
+                if (profileInfo has :sport) {
+                    switch (profileInfo.sport) {
+                        case Toybox.Activity.SPORT_RUNNING: { _hrZones = UserProfile.getHeartRateZones(UserProfile.HR_ZONE_SPORT_RUNNING);     break; }
+                        case Toybox.Activity.SPORT_CYCLING: { _hrZones = UserProfile.getHeartRateZones(UserProfile.HR_ZONE_SPORT_BIKING);    break; }
+                        default:                            { _hrZones = UserProfile.getHeartRateZones(UserProfile.HR_ZONE_SPORT_GENERIC); break; }
+                    }
+                }
+            }
             ActiveLook.Laps.onSessionStart();
         }
 
@@ -102,8 +123,8 @@ module ActiveLook {
                 return;
             }
             // Three seconds power & Normalized power
-            if (info has :currentPower && info.currentPower != null) {
-                __pSamples.add(info.currentPower);
+            if (power != null) {
+                __pSamples.add(power);
                 if (__pSamples.size() >= 30) {
                     __pSamples = __pSamples.slice(-30, null);
                     var tmp = 0;
@@ -160,6 +181,11 @@ module ActiveLook {
             }
         }
 
+        function computeBikePower(bp as Lang.Float?) as Void {
+            if (bp == null) {return;}
+            bikePower = bp;
+        }
+
         function compute(info as Activity.Info?) as Void {
             __ai = info;
 
@@ -174,6 +200,10 @@ module ActiveLook {
                 chrono = null;
             }
 
+            // Current power
+            tmp = __ai != null && __ai has :currentPower ? __ai.currentPower : null;
+            power = bikePower != null ? bikePower : tmp;
+            
             // Current pace
             tmp = get(:currentSpeed);
             tmpValid = tmp != null && tmp != false && tmp > 0.0;
@@ -204,30 +234,24 @@ module ActiveLook {
             }
             // Workaround : Some devices don't have averagePower & maxPower in Activity.info so we calculated them
             // Max power
-            tmp = get(:currentPower);
+            tmp = power;
             tmpValid = tmp != null && tmp != false && tmp > 0.0;
             if(tmpValid){
                  maxPower = maxPower == null ? tmp : tmp > maxPower ? tmp : maxPower;
             }
             // Average power
-            if (__ai != null && __ai has :averagePower) {
-                tmp = __ai.averagePower;
-                tmpValid = tmp != null && tmp != false && tmp > 0.0;
-                if(tmpValid){
+            tmp = __ai != null && __ai has :averagePower ? __ai.averagePower : null;
+            if(tmp != null && tmp != false && tmp > 0.0){
+                averagePower = tmp;
+            }else{
+                tmp = power != null && power != false && power > 0.0 ? power : 0.0;
+                if(averagePower != null){
+                    averagePower = ((averagePower * __pavgAccuNb) + tmp) / (__pavgAccuNb + 1);
+                } else{
                     averagePower = tmp;
-                }else{
-                    tmp = get(:currentPower);
-                    tmpValid = tmp != null && tmp != false && tmp > 0.0;
-                    if(tmpValid){
-                        if(averagePower != null){
-                            averagePower = ((averagePower * __pavgAccuNb) + tmp) / (__pavgAccuNb + 1);
-                        } else{
-                            averagePower = tmp;
-                        }
-                        __pavgAccuNb+=1;
-                    }
                 }
             }
+            __pavgAccuNb+=1;
         
             // Average ascent speed
             tmpValid = __asSamples.size();
@@ -236,6 +260,31 @@ module ActiveLook {
                 averageAscentSpeed = (__asSamples[tmp] - __asSamples[0]).toFloat() / tmp;
             } else if (tmpValid == 1) {
                 averageAscentSpeed = __asSamples[0].toFloat();
+            }
+
+            // heart rate zone
+            tmp = __ai != null && __ai has :currentHeartRate ? __ai.currentHeartRate : null;
+            if(_hrZones.size() == 6 && tmp != null){
+                if (tmp > _hrZones[4]) {
+                    currentHrZone[0] = 5;
+                } else if (tmp > _hrZones[3]) {
+                    currentHrZone[0] = 4;
+                } else if (tmp > _hrZones[2]) {
+                    currentHrZone[0] = 3;
+                } else if (tmp > _hrZones[1]) {
+                    currentHrZone[0] = 2;
+                } else {
+                    currentHrZone[0] = 1;
+                }
+                currentHrZone[1] = ((tmp - _hrZones[currentHrZone[0] - 1]) * 255) / (_hrZones[currentHrZone[0]] - _hrZones[currentHrZone[0] - 1]);
+                if(currentHrZone[1] > 255){
+                    currentHrZone[1] = 255;
+                }else if(currentHrZone[1] < 0){
+                    currentHrZone[1] = 0;
+                }
+                currentHrZone[2] = tmp;
+            }else{
+                currentHrZone = [1,0,-1];
             }
         }
 
@@ -264,7 +313,7 @@ module ActiveLook {
         const LAYOUTS as Lang.Array<Lang.Symbol> = [
             :chrono,           :elapsedDistance,   :distanceToDestination,
             :currentHeartRate, :maxHeartRate,      :averageHeartRate,
-            :currentPower,     :maxPower,          :averagePower,          :threeSecPower, :normalizedPower,
+            :power,     :maxPower,          :averagePower,          :threeSecPower, :normalizedPower,
             :currentSpeed,     :maxSpeed,          :averageSpeed,
             :currentPace,      :fastestPace,       :averagePace,
             :currentCadence,   :maxCadence,        :averageCadence,
@@ -280,11 +329,12 @@ module ActiveLook {
             :lapTotalAscent, :lapTotalDescent, :lapAverageAscentSpeed,
             :lapCalories,
             :lapAverageGroundContactTime, :lapAverageVerticalOscillation, :lapAverageStepLength,
+            :currentHrZone
         ];
 
         const POSITIONS as Lang.Array<PagePositions> = [
             [],
-            [ 0x00001E59 ],
+            [ 0x00021E59 ],
             [ 0x00001E77, 0x00001E23 ],
             [ 0x00001E99, 0x00001E59, 0x00001E19 ],
             [ 0x00001E99, 0x00001E59, 0x00019A22, 0x00011E22 ],
@@ -316,6 +366,7 @@ module ActiveLook {
                     } else if (spec.find(",") == 0) {
                         spec = spec.substring(1, spec.length());
                     } else {
+                        if(spec.toNumber() == null){pages = []; break;}
                         pages.add(PAGES[mapToBounds(spec.toNumber(), 0, PAGES.size() - 1)]);
                         var nIdx = spec.length();
                         var tIdx = null
@@ -334,7 +385,7 @@ module ActiveLook {
                 }
                 return strToPages(onError, null);
             }
-            return pages;
+            return pages.size() > 4 ? pages.slice(0,4) : pages;
         }
 
     }
@@ -346,6 +397,7 @@ module ActiveLook {
             :sym as Lang.Symbol,
             :converter as Lang.Float?,
             :toStr as Method(value as Lang.Numeric or Lang.Array<Lang.Numeric> or Null) as Lang.String,
+            :widget as Lang.Boolean?
         };
 
         /*
@@ -361,7 +413,7 @@ module ActiveLook {
          *  Heart Rate                      | :currentHeartRate      |     bpm   |       bpm        | a += "%0.2X%0.2X%0.2X%0.2X\n" % (21, 21, 49, 49)
          *  Max HeartRate                   | :maxHeartRate          |     bpm   |       bpm        | a += "%0.2X%0.2X%0.2X%0.2X\n" % (29, 29, 61, 61)
          *  Average Heart Rate              | :averageHeartRate      |     bpm   |       bpm        | a += "%0.2X%0.2X%0.2X%0.2X\n" % (24, 24, 52, 52)
-         *  Power                           | :currentPower          |      W    |        W         | a += "%0.2X%0.2X%0.2X%0.2X\n" % (22, 22, 56, 56)
+         *  Power                           | :power                 |      W    |        W         | a += "%0.2X%0.2X%0.2X%0.2X\n" % (22, 22, 56, 56)
          *  Max Power                       | :maxPower              |      W    |        W         | a += "%0.2X%0.2X%0.2X%0.2X\n" % (30, 30, 62, 62)
          *  Average Power                   | :averagePower          |      W    |        W         | a += "%0.2X%0.2X%0.2X%0.2X\n" % (25, 25, 53, 53)
          *  Power 3s                        | :threeSecPower         |      W    |        W         | a += "%0.2X%0.2X%0.2X%0.2X\n" % (42, 42, 65, 65)
@@ -395,7 +447,7 @@ module ActiveLook {
             :currentHeartRate      => 0x15153131,
             :maxHeartRate          => 0x1D1D3D3D,
             :averageHeartRate      => 0x18183434,
-            :currentPower          => 0x16163838,
+            :power                 => 0x16163838,
             :maxPower              => 0x1E1E3E3E,
             :averagePower          => 0x19193535,
             :threeSecPower         => 0x2A2A4141,
@@ -408,11 +460,12 @@ module ActiveLook {
             :groundContactTime           => 0xBDBDBEBE,
             :averageGroundContactTime    => 0xBDBDBEBE,
             :lapChrono                   => 0x0B0B2B2B,
-            :lapAverageHeartRate         => 0x18183434,
-            :lapAveragePower             => 0x19193535,
-            :lapAverageCadence           => 0x17173333,
-            :lapCalories                 => 0x11113636,
-            :lapAverageGroundContactTime => 0xBDBDBEBE,
+            :lapAverageHeartRate         => 0xCFCFD0D0,
+            :lapAveragePower             => 0xD1D1D2D2,
+            :lapAverageCadence           => 0xDBDBDCDC,
+            :lapCalories                 => 0xE6E6E7E7,
+            :lapAverageGroundContactTime => 0xE8E8E9E9,
+            :currentHrZone               => 0x00000000,
         };
 
         /*
@@ -437,7 +490,7 @@ module ActiveLook {
             :currentCadence           => 0x81818484,
             :maxCadence               => 0x82828585,
             :averageCadence           => 0x83838686,
-            :lapAverageCadence        => 0x83838686,
+            :lapAverageCadence        => 0xD9D9DADA,
         };
 
         /*
@@ -494,14 +547,14 @@ module ActiveLook {
             :averageVerticalOscillation => { :id => 0xC8C9CACA, :statuteSwitch => :heightUnits, :toMetric => 0.1,   :toStatute => 0.0393701  },
             :stepLength                 => { :id => 0xC2C3C4C4, :statuteSwitch => :heightUnits, :toMetric => 0.001, :toStatute => 0.00328084 },
             :averageStepLength          => { :id => 0xC2C3C4C4, :statuteSwitch => :heightUnits, :toMetric => 0.001, :toStatute => 0.00328084 }, 
-            :lapElapsedDistance    => { :id => 0x0C232E2E, :statuteSwitch => :distanceUnits,  :toMetric => 0.001,  :toStatute => 0.000621371 },
-            :lapAverageSpeed       => { :id => 0x0E222D2D, :statuteSwitch => :paceUnits,      :toMetric => 3.6,    :toStatute => 2.236936    },
-            :lapAveragePace        => { :id => 0x42434444, :statuteSwitch => :paceUnits,      :toMetric => 1000.0, :toStatute => 1609.344    },
-            :lapTotalAscent        => { :id => 0x13242F2F, :statuteSwitch => :elevationUnits,                      :toStatute => 3.28084     },
-            :lapTotalDescent       => { :id => 0x1A273939, :statuteSwitch => :elevationUnits,                      :toStatute => 3.28084     },
-            :lapAverageAscentSpeed => { :id => 0x14283B3B, :statuteSwitch => :paceUnits,      :toMetric => 3600.0, :toStatute => 11811.024   },
-            :lapAverageVerticalOscillation => { :id => 0xC8C9CACA, :statuteSwitch => :heightUnits, :toMetric => 0.1,   :toStatute => 0.0393701  },
-            :lapAverageStepLength          => { :id => 0xC2C3C4C4, :statuteSwitch => :heightUnits, :toMetric => 0.001, :toStatute => 0.00328084 },
+            :lapElapsedDistance    => { :id => 0xCCCDCECE, :statuteSwitch => :distanceUnits,  :toMetric => 0.001,  :toStatute => 0.000621371 },
+            :lapAverageSpeed       => { :id => 0xD3D4D5D5, :statuteSwitch => :paceUnits,      :toMetric => 3.6,    :toStatute => 2.236936    },
+            :lapAveragePace        => { :id => 0xD6D7D8D8, :statuteSwitch => :paceUnits,      :toMetric => 1000.0, :toStatute => 1609.344    },
+            :lapTotalAscent        => { :id => 0xDDDEDFDF, :statuteSwitch => :elevationUnits,                      :toStatute => 3.28084     },
+            :lapTotalDescent       => { :id => 0xE0E1E2E2, :statuteSwitch => :elevationUnits,                      :toStatute => 3.28084     },
+            :lapAverageAscentSpeed => { :id => 0xE3E4E5E5, :statuteSwitch => :paceUnits,      :toMetric => 3600.0, :toStatute => 11811.024   },
+            :lapAverageVerticalOscillation => { :id => 0xEAEBECEC, :statuteSwitch => :heightUnits, :toMetric => 0.1,   :toStatute => 0.0393701  },
+            :lapAverageStepLength          => { :id => 0xEDEDEFEF, :statuteSwitch => :heightUnits, :toMetric => 0.001, :toStatute => 0.00328084 },
         };
 
         const CUSTOM_TO_STR as Lang.Dictionary<Lang.Symbol, {
@@ -514,10 +567,20 @@ module ActiveLook {
             :averagePace 			=> { :full => :paceFullFormat,  :half => :paceHalfFormat  },
             :lapChrono      		=> { :full => :toFullChronoStr, :half => :toHalfChronoStr },
             :lapAveragePace 		=> { :full => :paceFullFormat,  :half => :paceHalfFormat  },
+            :lapAverageHeartRate 	=> { :full => :roundToIntFull,  :half => :roundToIntHalf  },
+            :lapAverageCadence  	=> { :full => :roundToIntFull,  :half => :roundToIntHalf  },
             :averagePower 		    => { :full => :averagePowerFullFormat,  :half => :averagePowerHalfFormat  },
             :lapAveragePower 		=> { :full => :averagePowerFullFormat,  :half => :averagePowerHalfFormat  },
             :normalizedPower 		=> { :full => :averagePowerFullFormat,  :half => :averagePowerHalfFormat  },
             :threeSecPower 		    => { :full => :averagePowerFullFormat,  :half => :averagePowerHalfFormat  },
+            :empty 		            => { :full => :emptyStr,  :half => :emptyStr  },
+        };
+
+        const WIDGET_TO_STR as Lang.Dictionary<Lang.Symbol, {
+            :full as Method(value as Lang.Numeric or Lang.Array<Lang.Numeric> or Null) as Lang.String,
+            :half as Method(value as Lang.Numeric or Lang.Array<Lang.Numeric> or Null) as Lang.String
+        }> = {
+            :currentHrZone      	=> { :full => :toHrZone, :half => :toHrZone, :large => :toHrZone, :defaultArgs => [5] },
         };
 
         function toFullChronoStr(value as Lang.Array<Lang.Number> or Null) as Lang.String {
@@ -587,6 +650,40 @@ module ActiveLook {
                 return toHalfStr("-");
             }
             return toHalfStr(Math.round(value).format("%.0f"));
+        }
+
+        function emptyStr(value as Lang.Array<Lang.Number> or Null) as Lang.String {
+            return "";
+        }
+
+        function roundToIntFull(value as Lang.Array<Lang.Number> or Null) as Lang.String {
+            if (value == null) {
+                return toFullStr("-");
+            }
+            return toFullStr(Math.round(value).toNumber());
+        }
+
+        function roundToIntHalf(value as Lang.Array<Lang.Number> or Null) as Lang.String {
+            if (value == null) {
+                return toHalfStr("-");
+            }
+            return toHalfStr(Math.round(value).toNumber());
+        }
+
+        function toHrZone(value as Lang.Array<Lang.Number> or Null) as Lang.String {
+            var buf = [0x02,value[4],0x0,0x0,0x0,0x0,0x0]b;
+            buf.addAll(value[4] == 0x02 ? [0x0C, 0x00]b : [0x60, 0x00]b );
+            buf.encodeNumber(value[2], Lang.NUMBER_FORMAT_SINT16, {:offset => 2, :endianness => Lang.ENDIAN_BIG});
+            buf.encodeNumber(value[3], Lang.NUMBER_FORMAT_SINT16, {:offset => 4, :endianness => Lang.ENDIAN_BIG});
+            buf.encodeNumber(value[0][2] == -1 ? 0 : value[0][1], Lang.NUMBER_FORMAT_UINT8, {:offset => 6, :endianness => Lang.ENDIAN_BIG});
+            buf.addAll($.sdk.stringToPadByteArray(
+                    "&BPM", null, null
+            ));
+            buf.addAll($.sdk.stringToPadByteArray(
+                    value[0][2] == -1 ? "-" : value[0][2].toString(), null, null
+            ));
+            buf.addAll([value[0][0],value[1]]b);
+            return buf;
         }
 
         function toSizedStringDeprecated(value as Lang.Number or Lang.Float or Null, size as Lang.Number) as Lang.String {
@@ -680,6 +777,10 @@ module ActiveLook {
             } else {
                 tmp = null;
             }
+            if (args.hasKey(:widget)) {
+                tmp = [tmp].addAll(args[:args]);
+                $.widgets.add(args[:widget].invoke(tmp));
+            }
             tmp = args[:toStr].invoke(tmp);
             tmp = StringUtil.convertEncodedString(tmp, {
                 :fromRepresentation => StringUtil.REPRESENTATION_STRING_PLAIN_TEXT,
@@ -713,7 +814,7 @@ module ActiveLook {
                 }
                     as GeneratorArguments;
                 var pos = positions[nb];
-                var mode = (pos & 0x00010000) >> 12; // (pos & 0x00FF0000 != 0) ? 16 : 0;
+                var mode = (pos & 0x000F0000) >> 12; // (pos & 0x00FF0000 != 0) ? 16 : 0;
                 if (IDS_NO_CONVERT.hasKey(newElem[:sym])) {
                     newElem[:id] = IDS_NO_CONVERT[newElem[:sym]];
                     if (Toybox.Activity has :getProfileInfo) {
@@ -739,7 +840,13 @@ module ActiveLook {
                 newElem[:id] = ((newElem[:id] << mode) & 0xFF000000) | (pos & 0x0000FFFF);
                 //System.println("layout id = " + ((newElem[:id] >> 24) &  0x000000FF).toString());
                 //System.println("layout id = " + newElem[:id].format("%04X"));
-                if (CUSTOM_TO_STR.hasKey(newElem[:sym])) {
+                if(WIDGET_TO_STR.hasKey(newElem[:sym])) {
+                    newElem.put(:toStr, new Lang.Method(Layouts, CUSTOM_TO_STR[:empty][mode < 16 ? :full : :half]));
+                    newElem.put(:widget, new Lang.Method(Layouts, WIDGET_TO_STR[newElem[:sym]][mode < 32 ? mode < 16 ? :full : :half : :large]));
+                    var args = [].addAll(WIDGET_TO_STR[newElem[:sym]][:defaultArgs]);
+                    args.addAll([pos & 0x0000FF00 >> 8, pos & 0x000000FF - 15,mode < 32 ? mode < 16 ? 1 : 2 : 0]);
+                    newElem.put(:args, args);
+                } else if (CUSTOM_TO_STR.hasKey(newElem[:sym])) {
                     newElem.put(:toStr, new Lang.Method(Layouts, CUSTOM_TO_STR[newElem[:sym]][mode < 16 ? :full : :half]));
                 } else {
                     newElem.put(:toStr, new Lang.Method(Layouts, mode < 16 ? :toFullStr : :toHalfStr));

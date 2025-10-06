@@ -1,5 +1,30 @@
 # Change log
 
+## 1.1.45
+
+### New Feature
+
+* Add Heart Rate zone widget
+* Add pages system to manage the screens
+* Add Bike Calculated Power
+* Changes on laps compute algorithm
+* Add UserProfile permissions in manifest for HeartRate zones access
+
+### New Device
+
+* enduro3
+* fenix843mm
+* fenix847mm
+* fenix8solar47mm
+* fenix8pro47mm
+* fenix8solar51mm
+* fenixe
+* fr57042mm
+* fr57047mm
+* fr970
+* venux1
+* vivoactive6
+
 ## 1.0.44
 
 ### New Feature

@@ -139,6 +139,7 @@ module ActiveLookBLE {
         //! @param delegate The object that will be responsible for handling events.
         //!
         //! @return         The Active Look object to use for handling Bluetooth operations.
+        (:release)
         static function setUp(delegate as ActiveLookBLE.ActiveLook.ActiveLookDelegate) as ActiveLookBLE.ActiveLook {
             _log("setUp", [_activeLook, delegate]);
             var skipRegister = _activeLook != null ? true : false;
@@ -172,6 +173,12 @@ module ActiveLookBLE {
             // https://developer.garmin.com/connect-iq/api-docs/Toybox/BluetoothLowEnergy/ProfileRegistrationException.html
             // But you can try to register more profiles...
             // > Registration can fail if too many profiles are registered, the current limit is 3.
+            return _activeLook as ActiveLookBLE.ActiveLook;
+        }
+         (:debug)
+        static function setUp(delegate as ActiveLookBLE.ActiveLook.ActiveLookDelegate) as ActiveLookBLE.ActiveLook {
+            _log("setUpDebug", [_activeLook, delegate, "skipRegister on debug mode" ]);
+            _activeLook = new ActiveLook(delegate);
             return _activeLook as ActiveLookBLE.ActiveLook;
         }
 
