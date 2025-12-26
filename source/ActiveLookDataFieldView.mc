@@ -208,8 +208,19 @@ class DataFieldDrawable extends WatchUi.Drawable {
             dc.drawText(midX, midY / 4, Graphics.FONT_XTINY, "ActiveLook", justify); // (50%, 15%)
             var font = WatchUi.loadResource(Rez.Fonts.alfont) as Graphics.FontType;
             if (!ActiveLookSDK.isReady()) {
-                // status: 5 = not connected
-                dc.drawText(midX, midY, font, "5", justify); // (50%, 60%)
+                // Check for reconnection status message
+                var reconnectMsg = ActiveLookSDK.getReconnectStatusMessage();
+                if (reconnectMsg != null) {
+                    // Show reconnection status with attempt count
+                    dc.drawText(midX, midY - 15d, Graphics.FONT_XTINY, reconnectMsg, justify);
+                    if (ActiveLookSDK.reconnectAttempts > 0 && ActiveLookSDK.reconnectAttempts < ActiveLookSDK.reconnectMaxAttempts) {
+                        var attemptStr = Lang.format("Attempt $1$/$2$", [ActiveLookSDK.reconnectAttempts, ActiveLookSDK.reconnectMaxAttempts]);
+                        dc.drawText(midX, midY + 10d, Graphics.FONT_XTINY, attemptStr, justify);
+                    }
+                } else {
+                    // status: 5 = not connected (first time)
+                    dc.drawText(midX, midY, font, "5", justify); // (50%, 60%)
+                }
             } else {
                 // status: 4 = connected
                 dc.drawText(midX / 2, midY, font, "4", justify); // (25%, 60%)
@@ -234,6 +245,7 @@ class ActiveLookDataFieldView extends WatchUi.DataField {
 
     hidden var __heart_count = 0;
     hidden var __lastError = null;
+    hidden var __wasConnectedPreviously = false;
   
     var __is_auto_loop = Toybox.Application.Properties.getValue("is_auto_loop") as Toybox.Lang.Boolean or Null;
     var __loop_timer = Toybox.Application.Properties.getValue("loop_timer") as Toybox.Lang.Integer or Null;
@@ -291,7 +303,18 @@ class ActiveLookDataFieldView extends WatchUi.DataField {
             return null;
         }
 		if (ActiveLookSDK.isIdled() && !ActiveLookSDK.isReconnecting && !ActiveLookSDK.isConnected()) {
-			$.sdk.startGlassesScan();
+			// Check if we should attempt reconnection with backoff
+			if (ActiveLookSDK.wasConnectedBefore) {
+				// We were connected before - this is a reconnection scenario
+				if (ActiveLookSDK.shouldAttemptReconnect()) {
+					ActiveLookSDK.recordReconnectAttempt();
+					log("compute", ["Attempting reconnection", ActiveLookSDK.reconnectAttempts]);
+					$.sdk.startGlassesScan();
+				}
+			} else {
+				// First time connection - no backoff needed
+				$.sdk.startGlassesScan();
+			}
 		} else if (!ActiveLookSDK.isReady()) {
 			if (self.__lastError != null && (self.__heart_count - self.__lastError) > 50) {
 				self.__lastError = null;
@@ -493,6 +516,11 @@ class ActiveLookDataFieldView extends WatchUi.DataField {
     }
     function onDeviceReady() as Void {
         $.log("onDeviceReady", []);
+        
+        // Check if this is a reconnection (we were connected before)
+        var isReconnection = self.__wasConnectedPreviously;
+        self.__wasConnectedPreviously = true;
+        
         if ($.tempo_off >= 0) {
             $.tempo_off = 2;
             $.tempo_pause = -1;
@@ -512,11 +540,39 @@ class ActiveLookDataFieldView extends WatchUi.DataField {
         }
         $.sdk.clearScreen();
         $.tempo_congrats = -1;
+        
+        // Show "Reconnected" message on glasses if this was a reconnection
+        if (isReconnection) {
+            self.showReconnectedMessage();
+        }
+    }
+    
+    //! Display a brief "Reconnected" message on the glasses
+    function showReconnectedMessage() as Void {
+        $.log("showReconnectedMessage", []);
+        if (ActiveLookSDK.isReady()) {
+            try {
+                var data = []b;
+                data.addAll($.sdk.numberToFixedSizeByteArray(250, 2));
+                data.addAll($.sdk.numberToFixedSizeByteArray(170, 2));
+                data.addAll([4, 2, 15]b);  // rotation, size, color
+                data.addAll($.sdk.stringToPadByteArray("Reconnected", null, null));
+                var fullBuffer = $.sdk.commandBuffer(0x01, []b) as Lang.ByteArray; // Clear Screen
+                fullBuffer.addAll($.sdk.commandBuffer(0x37, data)); // Text message
+                $.sdk.sendRawCmd(fullBuffer);
+                // Set a short tempo to clear the message and resume normal display
+                $.tempo_lap_freeze = 5;
+            } catch (e) {
+                $.log("showReconnectedMessage error", e);
+            }
+        }
     }
     function onDeviceDisconnected() as Void {
-        $.log("onDeviceDisconnected", []);
+        $.log("onDeviceDisconnected", ["wasConnectedPreviously:", self.__wasConnectedPreviously]);
         $.swipe = false;
         $.battery = null;
+        // Note: wasConnectedBefore is tracked in the SDK to enable reconnection logic
+        // The UI will now show reconnection status
     }
     function onBleError(exception as Toybox.Lang.Exception) as Void {
         // $.log("onBleError", exception);
