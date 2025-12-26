@@ -34,6 +34,15 @@ module ActiveLookSDK {
     var isReconnecting                               as Toybox.Lang.Boolean                      = false;
     var isRegisteringProfile                         as Toybox.Lang.Boolean                      = false;
 
+    //! Reconnection state management for graceful recovery after activity resume/crash
+    var reconnectAttempts                            as Toybox.Lang.Number                       = 0;
+    var reconnectMaxAttempts                         as Toybox.Lang.Number                       = 10;
+    var reconnectBackoffCounter                      as Toybox.Lang.Number                       = 0;
+    var reconnectBackoffInterval                     as Toybox.Lang.Number                       = 5;  // Start with 5 compute cycles (~5 seconds)
+    var reconnectLastAttemptTime                     as Toybox.Lang.Number                       = 0;
+    var wasConnectedBefore                           as Toybox.Lang.Boolean                      = false;
+    var isReconnectionInProgress                     as Toybox.Lang.Boolean                      = false;
+
     var layoutCmdId                                  as Lang.Number                              = 0x66;
 
     var device                                       as Toybox.BluetoothLowEnergy.Device or Null = null;
@@ -129,6 +138,53 @@ module ActiveLookSDK {
         if (!isBatteryNotifActivated) { return false; }
         if (!isALookTxNotifActivated) { return false; }
         return true;
+    }
+
+    //! Check if we should attempt a reconnection based on backoff timing
+    function shouldAttemptReconnect()                as Toybox.Lang.Boolean {
+        if (reconnectAttempts >= reconnectMaxAttempts) { return false; }
+        if (reconnectBackoffCounter > 0) {
+            reconnectBackoffCounter -= 1;
+            return false;
+        }
+        return true;
+    }
+
+    //! Record a reconnection attempt and update backoff
+    function recordReconnectAttempt()                as Void {
+        reconnectAttempts += 1;
+        // Exponential backoff: 5, 10, 20, 40, 60, 60, 60... (capped at 60 cycles ~1 minute)
+        reconnectBackoffInterval = reconnectBackoffInterval < 60 ? reconnectBackoffInterval * 2 : 60;
+        reconnectBackoffCounter = reconnectBackoffInterval;
+        isReconnectionInProgress = true;
+        _log("recordReconnectAttempt", [reconnectAttempts, reconnectBackoffInterval]);
+    }
+
+    //! Reset reconnection state after successful connection
+    function resetReconnectState()                   as Void {
+        reconnectAttempts = 0;
+        reconnectBackoffCounter = 0;
+        reconnectBackoffInterval = 5;
+        isReconnectionInProgress = false;
+        _log("resetReconnectState", []);
+    }
+
+    //! Get reconnection status message for display
+    function getReconnectStatusMessage()             as Toybox.Lang.String or Null {
+        if (!wasConnectedBefore) { return null; }
+        if (isConnected()) { return null; }
+        if (reconnectAttempts >= reconnectMaxAttempts) {
+            return "Reconnect failed";
+        }
+        if (isReconnectionInProgress || isScanning || isPairing) {
+            return "Reconnecting...";
+        }
+        return "Connection lost";
+    }
+
+    //! Check if we're in a reconnection scenario (was connected before but now disconnected)
+    function isInReconnectScenario()                 as Toybox.Lang.Boolean {
+        return wasConnectedBefore && !isConnected() && reconnectAttempts < reconnectMaxAttempts;
     }
 
     var time = null;    var clearError = null;
@@ -955,6 +1011,10 @@ module ActiveLookSDK {
             _log("onConnectedStateChanged", [device, state]);
             if (state == Toybox.BluetoothLowEnergy.CONNECTION_STATE_CONNECTED) {
                 isPairing = false;
+                // Mark that we've successfully connected (for reconnection tracking)
+                ActiveLookSDK.wasConnectedBefore = true;
+                // Reset reconnection state on successful connection
+                ActiveLookSDK.resetReconnectState();
                 setUpNewDevice(device);
             } else if (ActiveLookSDK.device == null) {
                 onBleError(new Toybox.Lang.InvalidValueException(Toybox.Lang.format("(E) Device was alread disconnected $1$ $2$.", [ActiveLookSDK.device, device])));

@@ -28,4 +28,9 @@
     <string id="not_enough_battery_glasses">Insufficient glasses battery</string>
     <string id="not_enough_battery_glasses_second_row">At least 5%</string>
     <string id="not_enough_battery_glasses_third_row">is required.</string>
+    
+    <string id="reconnecting">Reconnecting...</string>
+    <string id="reconnect_failed">Reconnect failed</string>
+    <string id="connection_lost">Connection lost</string>
+    <string id="reconnected">Reconnected</string>
 </strings>
